@@ -1,0 +1,2 @@
+
+one hospital patients has n hospital.Medical_histories
