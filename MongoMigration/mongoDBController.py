@@ -81,42 +81,13 @@ class mongoDBController():
         #If not, create it
         try:
             self.ensureOracle()
-            # self.ensureMongo()
+            self.ensureMongo()
             return True
         except Exception as e:
             print("Error creating the databases")
             print("Exception: ", e)
             return False
         
-       # Episode: Represents the episodes of a particular patient. Episodes of hospitalization and
-        # consultation are considered.
-        # Patient: Stores information about patients.
-        # Department: Maintains details about the hospital's departments.
-        # Staff: Records data of hospital staff.
-        # Doctor: Stores information specific to the hospital's doctors.
-        # Nurse: Contains details about the nurses at the hospital.
-        # Technician: Contains details about the hospital's technicians.
-        # Emergency_Contact (Emergency Contact): Records a patient's emergency contacts.
-        # Lab_Screening (Lab Screening): Contains information about lab tests.
-        # Insurance: Maintains details about patients' insurance.
-        # Medicine: Stores information about medications.
-        # Prescription: Records medical prescriptions.
-        # Medical_History (Medical History): Maintains the medical history of patients.
-        # Appointment: Contains details about appointments.
-        # Hospitalization: Contains details about hospitalizations.
-        # Room: Stores information about hospital rooms.
-        # Bill: Records information about invoices. 
-
-        # Probably create methods create hospital where it creates the tables for the
-        # Medicall staff, doctor, nurses ...
-        # And another method create patient where it creates the tables for the patient
-        # and the patient's data like medical history, insurance, emergency contact ...
-        # And another method create hospitalization where it creates the tables for the
-        # hospitalization and the rooms
-
-        # N medical historys have a patient
-        # A patient has n insurances, n emergency contacts, 
- 
     def migrate(self):
 
         try:
@@ -311,7 +282,7 @@ class mongoDBController():
                     #Lets conver the Patient to  a json object and insert it into the MongoDB
                     patient = Patient(patientID, patientFname, patientLname, patientBloodType, patientPhone, patientEmail, patientGender, patientPolicyNumber, patientBirthday, medical_histories_list, patientInsurance, emergency_contacts_list, episodesList)
                     patient = patient.to_json()
-                    self.MongoConnection["BDNOSQLTP"]["Patient"].insert_one(patient)
+                    self.mongoDB["Patient"].insert_one(patient)
 
                 except Exception as e:
                     print("Error migrating patient")
@@ -372,7 +343,6 @@ class mongoDBController():
     def ensureMongo(self):
         try:
             # In mongo I dont think that I have the need to create the database since I can retrieve it automatically
-
             self.mongoDB = self.MongoConnection["BDNOSQLTP"]
             return True
         except Exception as e:
@@ -416,8 +386,7 @@ class mongoDBController():
 
     def run_requirements(self):
         # Lets get all the installed pip packages
-        out = os.system('pip freeze')
-        # os.system('pip install -r requirements.txt')
+        os.system('pip install -r requirements.txt')
 
 
 
