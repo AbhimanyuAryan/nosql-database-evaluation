@@ -1,7 +1,8 @@
 import os
 import oracledb as oracle
 from dotenv import load_dotenv
-import pymongo
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
 import re
 import json
 
@@ -16,8 +17,8 @@ class mongoDBController():
         self.OracleConnection = self.connect(option="Oracle")
         self.MongoConnection = self.connect(option="MongoDB")  
         if self.OracleConnection!=None and self.MongoConnection!=None:
-            #self.dropDBs()
-            #self.ensureDBs()
+            self.dropDBs()
+            self.ensureDBs()
             self.migrate()
             self.OracleConnection.close()
             self.MongoConnection.close()
@@ -58,8 +59,27 @@ class mongoDBController():
                     cursor.execute("DROP TRIGGER " + trigger)
                 except Exception as e:
                     pass
+                
+            sequenceRegex = re.findall(r"CREATE SEQUENCE (\w+)", full_sql)
+            for sequence in sequenceRegex:
+                try:
+                    cursor.execute("DROP SEQUENCE " + sequence)
+                except Exception as e:
+                    pass
+
+            viewRegex = re.findall(r"CREATE VIEW (\w+)", full_sql)
+            for view in viewRegex:
+                try:
+                    cursor.execute("DROP VIEW " + view)
+                except Exception as e:
+                    pass
 
             print("Oracle database dropped")
+
+            #Lets drop the mongo database
+            self.MongoConnection.drop_database("BDNOSQLTP")
+            print("MongoDB database dropped")
+
         except Exception as e:
             print("Error dropping the Oracle database")
             print("Exception: ", e)
@@ -168,12 +188,17 @@ class mongoDBController():
                             try:
                                 prescriptionId = prescription[0]
                                 prescriptionDate = prescription[1]
-                                prescriptionMedicine = prescription[2]
-                                prescriptionDosage = prescription[3]
+                                prescriptionMedicine = prescription[3]
+                                prescriptionDosage = prescription[2]
+
+                                #Lets get the medicine data
+                                cursor.execute(f"SELECT * FROM MEDICINE WHERE IDMEDICINE = 1")
+                                medicine = cursor.fetchone()
+                                prescriptionMedicine = Medicine(medicine[0], medicine[1], medicine[2], medicine[3])
 
                                 prescriptions_list.append(Prescription(prescriptionId, prescriptionDate, prescriptionMedicine, prescriptionDosage))
                             except Exception as e:
-                                pass
+                                print("Error getting the prescriptions of the episode")
                         
                         #Lets get the bills of the episode
                         cursor.execute(f"SELECT * FROM BILL WHERE IDEPISODE = {episodeId}")
@@ -277,7 +302,7 @@ class mongoDBController():
                             except Exception as e:
                                 pass
 
-                        episodesList.append(Episode(episodeId, patientID, prescriptions_list, bills_list, screenings_list))
+                        episodesList.append(Episode(episodeId, patientID, prescriptions_list, bills_list, screenings_list, appointments_list, hospitalizations_list))
                       
                     #Lets conver the Patient to  a json object and insert it into the MongoDB
                     patient = Patient(patientID, patientFname, patientLname, patientBloodType, patientPhone, patientEmail, patientGender, patientPolicyNumber, patientBirthday, medical_histories_list, patientInsurance, emergency_contacts_list, episodesList)
@@ -298,17 +323,50 @@ class mongoDBController():
             print("Error migrating from Oracle to MongoDB")
             print("Exception: ", e)
 
+    def createTrigger(self):
+        try:
+            groupId = 0
+            appId = 0
+            uri = f"https://services.cloud.mongodb.com/api/admin/v3.0/groups/{groupId}/apps/{appId}/triggers"
+
+        except Exception as e:
+            print("Error creating the trigger in MongoDB")
+            print("Exception: ", e)
+
 
     def ensureOracle(self):
         sql_command=""
         try:
             cursor = self.OracleConnection.cursor()
 
-            # cursor.execute("CREATE SCHEMA BDNOSQLTP;")
-            print("Schema created in Oracle")
+
             # Lets execute the script hospotal.sql to create the tables
             file = open("./data/hospital.sql", "r")
             full_sql = file.read()
+            
+            #Lets verify if the tables already exist if so return
+            regexTables = re.findall(r"CREATE TABLE (\w+)", full_sql)
+            for table in regexTables:
+                try:
+                    cursor.execute(f"SELECT * FROM {table}")
+                    print("Tables already created in Oracle. Skipping...")
+                    return True
+                except Exception as e:
+                    pass
+
+            #Lets capture the procedures and triggers from the script in order to then execute them in the mongo db
+            proceduresRegex = r"CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+(\w+)\s*\(([^)]*)\)\s*IS\s*([\s\S]*)END;\s*\/"
+            triggersRegex = r"CREATE\s+OR\s+REPLACE\s+TRIGGER\s+(\w+)\sAFTER\s(INSERT|UPDATE|DELETE)\sOF\s(\w+)\sON\s(\w+)\sFOR\sEACH\sROW\s*DECLARE(\s+.*\s)+BEGIN\s*([\s\S]*)END;\s*\/"
+
+            self.sqlprocedures = re.findall(proceduresRegex, full_sql)
+            self.sqltriggers = re.findall(triggersRegex, full_sql)
+
+            #Lets strip them from the full_sql
+            full_sql = re.sub(proceduresRegex, "", full_sql)
+            full_sql = re.sub(triggersRegex, "", full_sql)
+            #Lets capture all the comments from the script
+           # comments = re.findall(r"/\*+[\s\S]*?\*+/", full_sql)
+            full_sql = re.sub(r"/\*+[\s\S]*?\*+/", "", full_sql)
 
             # Split the script into individual statements
             sql_commands = full_sql.split(';')
@@ -317,14 +375,9 @@ class mongoDBController():
             for i in tqdm(range(numCommands), desc="Running SQL commands", unit="command"):
                 try:
                     sql_command = sql_commands[i]
-                    #print(f"Executing command {commandId}")
                     cursor.execute(sql_command.strip())
-   
                 except Exception as e:
-                    print("Error creating the table in Oracle")
-                    print("Exception: ", e)
-                    print("SQL Command: ", sql_command)
-                    break
+                    pass
 
                 commandId+=1
 
@@ -376,7 +429,12 @@ class mongoDBController():
             
         if (option == "MongoDB" or option==1):
             try:
-                client = pymongo.MongoClient("mongodb://localhost:27017/")
+                mongoUserName = os.getenv('MONGO_USER') 
+                mongoPassword = os.getenv('MONGO_PASSWORD')
+                uri = f"mongodb+srv://{mongoUserName}:{mongoPassword}@bdnosql.isx6fkl.mongodb.net/?retryWrites=true&w=majority&appName=bdnosql"
+
+                client = MongoClient(uri, server_api=ServerApi('1'))
+                client.admin.command('ping')
                 
                 print("Successfull connection to MongoDB Database")
                 return client

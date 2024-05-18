@@ -82,20 +82,24 @@ class EmergencyContact:
         }
 
 class Episode:
-    def __init__(self, episode_id, patient_id, prescriptions, bills, screenings):
+    def __init__(self, episode_id, patient_id, prescriptions, bills, screenings, appointments, hospitalizations):
         self.episode_id = episode_id
         self.patient_id = patient_id
         self.prescriptions = prescriptions
         self.bills = bills
         self.screenings = screenings
+        self.appointments = appointments
+        self.hospitalizations = hospitalizations
     
     def to_json(self):
         return {
             'episode_id': self.episode_id,
             'patient_id': self.patient_id,
-            'prescriptions': [prescription.__dict__ for prescription in self.prescriptions],
+            'prescriptions': [prescription.to_json() for prescription in self.prescriptions],
             'bills': [bill.__dict__ for bill in self.bills],
-            'screenings': [screening.__dict__ for screening in self.screenings]
+            'screenings': [screening.__dict__ for screening in self.screenings],
+            'appointments': [appointment.to_json() for appointment in self.appointments],
+            'hospitalizations': [hospitalization.to_json() for hospitalization in self.hospitalizations]
         }
 
 class Prescription:
@@ -109,7 +113,7 @@ class Prescription:
         return {
             'prescription_id': self.prescription_id,
             'prescription_date': self.prescription_date,
-            'medicine': self.medicine,
+            'medicine': self.medicine.to_json(),
             'dosage': self.dosage
         }
     
