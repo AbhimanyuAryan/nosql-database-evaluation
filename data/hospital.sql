@@ -373,8 +373,97 @@ JOIN
     patient p ON e.patient_idpatient = p.idpatient;
     
 
+/***************************
+   Create Procedure
+****************************/
+    
+CREATE OR REPLACE PROCEDURE sp_update_bill_status (
+    p_bill_id bill.idbill%TYPE,
+    p_paid_value bill.total%TYPE
+) 
+IS
+    v_total bill.total%TYPE;
+BEGIN
+    -- Retrieve the total value of the bill
+    SELECT
+        total
+    INTO
+        v_total
+    FROM
+        bill
+    WHERE
+        idbill = p_bill_id;
+
+    -- Check if the paid value is less than the total value of the bill
+    IF p_paid_value < v_total THEN
+        -- If paid value is less than total, update status to FAILURE
+        UPDATE bill
+        SET
+            payment_status = 'FAILURE'
+        WHERE
+            idbill = p_bill_id;
+            
+        -- Raise an error
+        raise_application_error(-20001, 'Paid value is inferior to the total value of the bill.');
+    ELSE 
+        -- If paid value is equal to total, update status to PROCESSED
+        UPDATE bill
+        SET
+            payment_status = 'PROCESSED'
+        WHERE
+            idbill = p_bill_id;
+        
+    END IF;
+END;
+/
 
 
+/***************************
+   Create Trigger
+****************************/
+CREATE OR REPLACE TRIGGER trg_generate_bill
+AFTER UPDATE OF discharge_date ON hospitalization
+FOR EACH ROW
+DECLARE
+    v_room_cost    NUMBER;
+    v_test_cost    NUMBER;
+    v_other_charges  NUMBER;
+    v_total_cost   NUMBER;
+BEGIN
+    -- Check if the discharge date has been updated
+    IF :OLD.discharge_date IS NULL AND :NEW.discharge_date IS NOT NULL THEN
+        -- Calculate the room cost for the associated hospitalization
+        SELECT NVL(SUM(room_cost), 0)
+        INTO v_room_cost
+        FROM room
+        WHERE idroom = :NEW.room_idroom;
+
+        -- Calculate the test cost for the associated hospitalization
+        SELECT NVL(SUM(test_cost), 0)
+        INTO v_test_cost
+        FROM lab_screening
+        WHERE episode_idepisode = :NEW.idepisode;
+
+        -- Calculate the other charges for prescriptions for the associated hospitalization
+        SELECT NVL(SUM(m_cost * dosage), 0)
+        INTO v_other_charges
+        FROM prescription p
+        JOIN medicine m ON p.idmedicine = m.idmedicine
+        WHERE p.idepisode = :NEW.idepisode;
+
+        -- Calculate the total cost of the bill for the associated episode
+        v_total_cost := v_room_cost + v_test_cost + v_other_charges;
+
+        -- Insert the bill with the total cost for the associated episode
+        INSERT INTO bill (idepisode, room_cost, test_cost, other_charges, total, payment_status, registered_at)
+        VALUES (:NEW.idepisode, v_room_cost, v_test_cost, v_other_charges, v_total_cost, 'PENDING', SYSDATE);
+        
+    END IF;
+END;
+/
+
+
+SET DEFINE OFF;
 Insert into DEPARTMENT (DEPT_HEAD,DEPT_NAME,EMP_COUNT) values ('John Smith','Cardiology_1','2');
 Insert into DEPARTMENT (DEPT_HEAD,DEPT_NAME,EMP_COUNT) values ('Michael Williams','Emergency_2','3');
 Insert into DEPARTMENT (DEPT_HEAD,DEPT_NAME,EMP_COUNT) values ('Emily Johnson','Diagnostic_3','3');
@@ -2485,4 +2574,5 @@ Insert into BILL (ROOM_COST,TEST_COST,OTHER_CHARGES,TOTAL,IDEPISODE,PAYMENT_STAT
 Insert into BILL (ROOM_COST,TEST_COST,OTHER_CHARGES,TOTAL,IDEPISODE,PAYMENT_STATUS) values ('500','90.97','3530','4120.97','122','PENDING');
 Insert into BILL (ROOM_COST,TEST_COST,OTHER_CHARGES,TOTAL,IDEPISODE,PAYMENT_STATUS) values ('400','0','2730','3130','125','PENDING');
 Insert into BILL (ROOM_COST,TEST_COST,OTHER_CHARGES,TOTAL,IDEPISODE,PAYMENT_STATUS) values ('100','198.34','9905','10203.34','2','PENDING');
+
 
