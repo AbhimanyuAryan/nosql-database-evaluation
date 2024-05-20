@@ -5,6 +5,8 @@ from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import re
 import json
+import requests
+from requests.auth import HTTPDigestAuth
 
 import sys
 sys.path.append('./structs/')
@@ -17,9 +19,56 @@ class mongoDBController():
         self.OracleConnection = self.connect(option="Oracle")
         self.MongoConnection = self.connect(option="MongoDB")  
         if self.OracleConnection!=None and self.MongoConnection!=None:
-            self.dropDBs()
+            #self.dropDBs()
             self.ensureDBs()
-            self.migrate()
+            #self.migrate()
+            #Lets create the trigger in MongoDB
+            triggerFunction = """
+                exports = function(event) {
+                const { fullDocument } = event;
+
+                // Check if the discharge date has been updated
+                if (fullDocument && !fullDocument.discharge_date) {
+                    const { room_idroom, idepisode } = fullDocument;
+
+                    // Calculate the room cost for the associated hospitalization
+                    const roomCost = db.room.aggregate([
+                    { $match: { idroom: room_idroom } },
+                    { $group: { _id: null, totalRoomCost: { $sum: "$room_cost" } } }
+                    ]).toArray()[0].totalRoomCost || 0;
+
+                    // Calculate the test cost for the associated hospitalization
+                    const testCost = db.lab_screening.aggregate([
+                    { $match: { episode_idepisode: idepisode } },
+                    { $group: { _id: null, totalTestCost: { $sum: "$test_cost" } } }
+                    ]).toArray()[0].totalTestCost || 0;
+
+                    // Calculate the other charges for prescriptions for the associated hospitalization
+                    const otherCharges = db.prescription.aggregate([
+                    { $match: { idepisode: idepisode } },
+                    { $lookup: { from: "medicine", localField: "idmedicine", foreignField: "idmedicine", as: "medicine" } },
+                    { $unwind: "$medicine" },
+                    { $group: { _id: null, totalOtherCharges: { $sum: { $multiply: ["$medicine.m_cost", "$dosage"] } } } }
+                    ]).toArray()[0].totalOtherCharges || 0;
+
+                    // Calculate the total cost of the bill for the associated episode
+                    const totalCost = roomCost + testCost + otherCharges;
+
+                    // Insert the bill with the total cost for the associated episode
+                    db.bill.insertOne({
+                    idepisode: idepisode,
+                    room_cost: roomCost,
+                    test_cost: testCost,
+                    other_charges: otherCharges,
+                    total: totalCost,
+                    payment_status: "PENDING",
+                    registered_at: new Date()
+                    });
+                }
+                };
+            """
+            self.createAtlasFunction({"name": self.sqltriggers[0][0], "code": triggerFunction})
+
             self.OracleConnection.close()
             self.MongoConnection.close()
             print("Migration Completed")
@@ -323,17 +372,6 @@ class mongoDBController():
             print("Error migrating from Oracle to MongoDB")
             print("Exception: ", e)
 
-    def createTrigger(self):
-        try:
-            groupId = 0
-            appId = 0
-            uri = f"https://services.cloud.mongodb.com/api/admin/v3.0/groups/{groupId}/apps/{appId}/triggers"
-
-        except Exception as e:
-            print("Error creating the trigger in MongoDB")
-            print("Exception: ", e)
-
-
     def ensureOracle(self):
         sql_command=""
         try:
@@ -343,6 +381,13 @@ class mongoDBController():
             # Lets execute the script hospotal.sql to create the tables
             file = open("./data/hospital.sql", "r")
             full_sql = file.read()
+
+            #Lets capture the procedures and triggers from the script in order to then execute them in the mongo db
+            proceduresRegex = r"CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+(\w+)\s*\(([^)]*)\)\s*IS\s*([\s\S]*)END;\s*\/"
+            triggersRegex = r"CREATE\s+OR\s+REPLACE\s+TRIGGER\s+(\w+)\sAFTER\s(INSERT|UPDATE|DELETE)\sOF\s(\w+)\sON\s(\w+)\sFOR\sEACH\sROW\s*DECLARE(\s+.*\s)+BEGIN\s*([\s\S]*)END;\s*\/"
+
+            self.sqlprocedures = re.findall(proceduresRegex, full_sql)
+            self.sqltriggers = re.findall(triggersRegex, full_sql)
             
             #Lets verify if the tables already exist if so return
             regexTables = re.findall(r"CREATE TABLE (\w+)", full_sql)
@@ -353,13 +398,6 @@ class mongoDBController():
                     return True
                 except Exception as e:
                     pass
-
-            #Lets capture the procedures and triggers from the script in order to then execute them in the mongo db
-            proceduresRegex = r"CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+(\w+)\s*\(([^)]*)\)\s*IS\s*([\s\S]*)END;\s*\/"
-            triggersRegex = r"CREATE\s+OR\s+REPLACE\s+TRIGGER\s+(\w+)\sAFTER\s(INSERT|UPDATE|DELETE)\sOF\s(\w+)\sON\s(\w+)\sFOR\sEACH\sROW\s*DECLARE(\s+.*\s)+BEGIN\s*([\s\S]*)END;\s*\/"
-
-            self.sqlprocedures = re.findall(proceduresRegex, full_sql)
-            self.sqltriggers = re.findall(triggersRegex, full_sql)
 
             #Lets strip them from the full_sql
             full_sql = re.sub(proceduresRegex, "", full_sql)
@@ -402,6 +440,103 @@ class mongoDBController():
             print("Error creating the collections in MongoDB")
             print("Exception: ", e)
             return False
+        
+    def createTrigger(self, trigger, functionId):
+        #https://www.mongodb.com/docs/atlas/app-services/admin/api/v3/#tag/triggers/operation/adminCreateTrigger
+        try:
+            groupId = 0
+            appId = 0
+            uri = f"https://services.cloud.mongodb.com/api/admin/v3.0/groups/{groupId}/apps/{appId}/triggers"
+
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer <token>"
+            }
+
+            payload = {
+                "name": trigger["name"],
+                "type": "DATABASE",
+                "function_id": functionId,
+                "config": {
+                    "operation_types": trigger["operations"],
+                    "database": trigger["database"],
+                    "collection": trigger["collection"],
+                    "service_id": "5adeb649b8b998486770ae7c",
+                    "match": {},
+                    "project": {},
+                    "full_document": True
+                }
+            }
+
+            response = requests.post(uri, headers=headers, json=payload)
+
+            if response.status_code == 201:
+                print("Trigger created in MongoDB")
+            else:
+                print("Error creating the trigger in MongoDB")
+                print("Response: ", response.json())
+
+        except Exception as e:
+            print("Error creating the trigger in MongoDB")
+            print("Exception: ", e)
+
+
+    def createAtlasFunction(self, function):
+        #https://www.mongodb.com/docs/atlas/app-services/admin/api/v3/#tag/functions/operation/adminCreateFunction
+        try:
+            projectId = self.mongoGroupId
+            groupId = self.mongoProjectId
+            uri = f"https://services.cloud.mongodb.com/api/atlas/v1.0/groups/{groupId}/apps/{appId}/functions"
+            """
+            headers = {
+                'Content-Type': 'application/json',
+                'Access-Control-Request-Headers': '*',
+                'api-key': self.mongoBearer,
+                'Accept': 'application/json'
+            }
+
+            payload = {
+                "name": function["name"],
+                "private": True,
+                "source": function["code"],
+                "run_as_system": True
+                }
+            
+            print("Headers: ", headers)
+            #Response:
+            response = requests.post(uri, headers=headers, json=payload)
+            #{
+            #"_id": "string",
+            #"name": "string"
+            #}
+            if response.status_code == 201:
+                print("Function created in MongoDB")
+                return response.json()
+            else:
+                print("Error creating the function in MongoDB")
+                print("Response: ", response.json())
+            """
+            auth = HTTPDigestAuth('cpfdagvq', 'b08b1acc-b0c0-4d3c-8004-235e4a18619b')
+            payload = json.dumps({
+                "collection": "Patient",
+                "database": "bdnosql",
+                "dataSource": "bdnosql",
+                "projection": {
+                    "_id": 1
+                }
+            })
+
+            headers = {"Accept"       : "application/vnd.atlas.2023-01-01+json",
+                    "Content-Type" : "application/json"}
+
+            url = f"https://cloud.mongodb.com/api/atlas/v2/groups"
+            response = requests.get(url, auth=auth, headers=headers)
+
+            print(response.text)
+        except Exception as e:
+            print("Error creating the function in MongoDB")
+            print("Exception: ", e)
+            return None
 
 
     def connect(self, option):
@@ -435,6 +570,10 @@ class mongoDBController():
 
                 client = MongoClient(uri, server_api=ServerApi('1'))
                 client.admin.command('ping')
+
+                self.mongoBearer = os.getenv('MONGO_BEARER')
+                self.mongoProjectId = os.getenv('MONGO_PROJECT_ID')
+                self.mongoGroupId = os.getenv('MONGO_GROUP_ID')
                 
                 print("Successfull connection to MongoDB Database")
                 return client
@@ -449,22 +588,3 @@ class mongoDBController():
 
 
 mongoDBController()
-
-
-
-# Connect to the atlas para ter triggers
-
-# from pymongo.mongo_client import MongoClient
-# from pymongo.server_api import ServerApi
-
-# uri = "mongodb+srv://admin:bdnosql@cluster0.xmvpdfk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-
-# # Create a new client and connect to the server
-# client = MongoClient(uri, server_api=ServerApi('1'))
-
-# # Send a ping to confirm a successful connection
-# try:
-#     client.admin.command('ping')
-#     print("Pinged your deployment. You successfully connected to MongoDB!")
-# except Exception as e:
-#     print(e)
