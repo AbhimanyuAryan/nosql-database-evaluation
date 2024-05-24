@@ -13,62 +13,101 @@ sys.path.append('./structs/')
 from structs import *
 from tqdm import tqdm
 
+#https://www.mongodb.com/docs/manual/reference/change-events/update/#mongodb-data-update
+#Lets get the fullDocument and the fullDocumentBeforeChange, compare its hospitalizations discharge date
+"""
+This is the sql trigger that we want to migrate to MongoDB
+
+IF :OLD.discharge_date IS NULL AND :NEW.discharge_date IS NOT NULL THEN
+        -- Calculate the room cost for the associated hospitalization
+        SELECT NVL(SUM(room_cost), 0)
+        INTO v_room_cost
+        FROM room
+        WHERE idroom = :NEW.room_idroom;
+
+        -- Calculate the test cost for the associated hospitalization
+        SELECT NVL(SUM(test_cost), 0)
+        INTO v_test_cost
+        FROM lab_screening
+        WHERE episode_idepisode = :NEW.idepisode;
+
+        -- Calculate the other charges for prescriptions for the associated hospitalization
+        SELECT NVL(SUM(m_cost * dosage), 0)
+        INTO v_other_charges
+        FROM prescription p
+        JOIN medicine m ON p.idmedicine = m.idmedicine
+        WHERE p.idepisode = :NEW.idepisode;
+
+        -- Calculate the total cost of the bill for the associated episode
+        v_total_cost := v_room_cost + v_test_cost + v_other_charges;
+
+        -- Insert the bill with the total cost for the associated episode
+        INSERT INTO bill (idepisode, room_cost, test_cost, other_charges, total, payment_status, registered_at)
+        VALUES (:NEW.idepisode, v_room_cost, v_test_cost, v_other_charges, v_total_cost, 'PENDING', SYSDATE);
+        
+    END IF;
+
+    
+In mongo we will do
+var document = changeEvent.update.fullDocument;
+var documentBefore = changeEvent.update.fullDocumentBeforeChange;
+#TODO: Verify this function because I think that we are stacking bills, probably should verify the diference between the previous episode and the new one to not stack the bills
+
+
+# Lets figure out what hospitalization discharge date has been updated
+for (var i=0; i<documentBefore.episodes.length; i++) {
+
+    for (var j=0; j<documentBefore.episodes[i].hospitalizations[j].length; j++) {
+        var hospitalizationBefore = documentBefore.episodes[i].hospitalizations[j]; 
+        var hospitalization = document.episodes[i].hospitalizations[j];
+        #If the dischargeDate of said hospitalization is diferent in the document and the document before we will calculate the bill
+        
+        if (hospitalizationBefore.dischargeDate == null && hospitalization.dischargeDate != null) {
+            # The room cost for the associated hospitalization is in the document
+            var roomCost = hospitalization.room.room_cost;
+
+            # Calculate the test cost for the associated hospitalization
+            #The testing costs are also in the document
+            var testCost = 0;
+            for (var k=0; k<hospitalization.screenings.length; k++) {
+                testCost += hospitalization.screenings[k].screening_cost;
+            }
+
+
+            # Calculate the other charges for prescriptions for the associated hospitalization
+            var otherCharges = 0;
+            for (var k=0; k<hospitalization.prescriptions.length; k++) {
+                otherCharges += hospitalization.prescriptions[k].medicine.m_cost * hospitalization.prescriptions[k].medicine_quantity;
+            }
+
+
+            # Calculate the total cost of the bill for the associated episode
+            var totalCost = roomCost + testCost + otherCharges;
+
+            # Insert the bill with the total cost for the associated episode
+            db.bill.insertOne({
+                idepisode: document.idepisode,
+                room_cost: roomCost,
+                test_cost: testCost,
+                other_charges: otherCharges,
+                total: totalCost,
+                payment_status: "PENDING",
+                registered_at: new Date()
+            });
+        }
+    }
+}
+"""
+
 class mongoDBController():
     def __init__(self):
         #self.run_requirements()
         self.OracleConnection = self.connect(option="Oracle")
         self.MongoConnection = self.connect(option="MongoDB")  
         if self.OracleConnection!=None and self.MongoConnection!=None:
-            #self.dropDBs()
+            self.dropDBs()
             self.ensureDBs()
-            #self.migrate()
-            #Lets create the trigger in MongoDB
-            triggerFunction = """
-                exports = function(event) {
-                const { fullDocument } = event;
-
-                // Check if the discharge date has been updated
-                if (fullDocument && !fullDocument.discharge_date) {
-                    const { room_idroom, idepisode } = fullDocument;
-
-                    // Calculate the room cost for the associated hospitalization
-                    const roomCost = db.room.aggregate([
-                    { $match: { idroom: room_idroom } },
-                    { $group: { _id: null, totalRoomCost: { $sum: "$room_cost" } } }
-                    ]).toArray()[0].totalRoomCost || 0;
-
-                    // Calculate the test cost for the associated hospitalization
-                    const testCost = db.lab_screening.aggregate([
-                    { $match: { episode_idepisode: idepisode } },
-                    { $group: { _id: null, totalTestCost: { $sum: "$test_cost" } } }
-                    ]).toArray()[0].totalTestCost || 0;
-
-                    // Calculate the other charges for prescriptions for the associated hospitalization
-                    const otherCharges = db.prescription.aggregate([
-                    { $match: { idepisode: idepisode } },
-                    { $lookup: { from: "medicine", localField: "idmedicine", foreignField: "idmedicine", as: "medicine" } },
-                    { $unwind: "$medicine" },
-                    { $group: { _id: null, totalOtherCharges: { $sum: { $multiply: ["$medicine.m_cost", "$dosage"] } } } }
-                    ]).toArray()[0].totalOtherCharges || 0;
-
-                    // Calculate the total cost of the bill for the associated episode
-                    const totalCost = roomCost + testCost + otherCharges;
-
-                    // Insert the bill with the total cost for the associated episode
-                    db.bill.insertOne({
-                    idepisode: idepisode,
-                    room_cost: roomCost,
-                    test_cost: testCost,
-                    other_charges: otherCharges,
-                    total: totalCost,
-                    payment_status: "PENDING",
-                    registered_at: new Date()
-                    });
-                }
-                };
-            """
-            self.createAtlasFunction({"name": self.sqltriggers[0][0], "code": triggerFunction})
-
+            self.migrate()
             self.OracleConnection.close()
             self.MongoConnection.close()
             print("Migration Completed")
@@ -289,7 +328,8 @@ class mongoDBController():
 
                                 screenings_list.append(LabScreening(screeningId, screeningCost, screeningDate, technician))
                             except Exception as e:
-                                pass
+                                print("Error getting the screenings of the episode")
+                                print("Exception: ", e)
 
                         #Lets get the episodes appointment
                         cursor.execute(f"SELECT * FROM APPOINTMENT WHERE IDEPISODE = {episodeId}")
@@ -316,7 +356,8 @@ class mongoDBController():
                                 #scheduled_on, appointment_date, appointment_time, doctor
                                 appointments_list.append(Appointment(appointmentId, appointmentDate, doctor, appointmentStatus))
                             except Exception as e:
-                                pass
+                                print("Error getting the appointments of the episode")
+                                print("Exception: ", e)
                         
                         #Lets get all the hospitalizations of the episode
                         cursor.execute(f"SELECT * FROM HOSPITALIZATION WHERE IDEPISODE = {episodeId}")
@@ -348,8 +389,11 @@ class mongoDBController():
                                 room = Room(room[0], room[1], room[2], room[3], room[4])
 
                                 hospitalizations_list.append(Hospitalization(hospitalizationId, hospitalizationAdmissionDate, hospitalizationDischargeDate, room, nurse))
+                            
+                            #Verify for another migration in order to get to know why the episodes are empty
                             except Exception as e:
-                                pass
+                                print("Error getting the hospitalizations of the episode")
+                                print("Exception: ", e)
 
                         episodesList.append(Episode(episodeId, patientID, prescriptions_list, bills_list, screenings_list, appointments_list, hospitalizations_list))
                       
@@ -362,10 +406,64 @@ class mongoDBController():
                     print("Error migrating patient")
                     print("Exception: ", e)
 
+            #Now that we have our database we will create the views
+            for view in self.sqlViews:
+                #Lets get the view name
+                viewName = re.findall(r"CREATE VIEW (\w+)", view)[0]
 
-
-        # Probably we wont use a list for the emergecny contacts for each user in the mongoDB since getting them from there is going to take more resources than 
-        # Using another table to store them and then retrieving them by querying by the patientID
+                #For each Patient apoointment we will get 
+                #scheduled_on, appointment_date, appointment_time, doctor, department name, patient
+                
+                self.mongoDB["Patient"].createView(
+                    viewName,
+                    "Patient",
+                    [
+                        {
+                            "$unwind": "$episodes"
+                        },
+                        {
+                            "$unwind": "$episodes.appointments"
+                        },
+                        {
+                            "$lookup": {
+                                "from": "Staff",
+                                "localField": "episodes.appointments.doctor.emp_id",
+                                "foreignField": "emp_id",
+                                "as": "doctor"
+                            }
+                        },
+                        {
+                            "$unwind": "$doctor"
+                        },
+                        {
+                            "$lookup": {
+                                "from": "Department",
+                                "localField": "doctor.iddepartment",
+                                "foreignField": "iddepartment",
+                                "as": "department"
+                            }
+                        },
+                        {
+                            "$unwind": "$department"
+                        },
+                        {
+                            "$project": {
+                                "appointment_scheduled_date": "$episodes.appointments.scheduled_on",
+                                "appointment_date": "$episodes.appointments.appointment_date",
+                                "appointment_time": "$episodes.appointments.appointment_time",
+                                "doctor_id": "$doctor.emp_id",
+                                "doctor_qualifications": "$doctor.qualifications",
+                                "department_name": "$department.dept_name",
+                                "patient_first_name": "$patientFname",
+                                "patient_last_name": "$patientLname",
+                                "patient_blood_type": "$patientBloodType",
+                                "patient_phone": "$patientPhone",
+                                "patient_email": "$patientEmail",
+                                "patient_gender": "$patientGender"
+                            }
+                        }
+                    ]
+                )
 
 
         except Exception as e:
@@ -383,11 +481,13 @@ class mongoDBController():
             full_sql = file.read()
 
             #Lets capture the procedures and triggers from the script in order to then execute them in the mongo db
-            proceduresRegex = r"CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+(\w+)\s*\(([^)]*)\)\s*IS\s*([\s\S]*)END;\s*\/"
-            triggersRegex = r"CREATE\s+OR\s+REPLACE\s+TRIGGER\s+(\w+)\sAFTER\s(INSERT|UPDATE|DELETE)\sOF\s(\w+)\sON\s(\w+)\sFOR\sEACH\sROW\s*DECLARE(\s+.*\s)+BEGIN\s*([\s\S]*)END;\s*\/"
+            proceduresRegex = r"CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+\w+\s*\([^)]*\)\s*IS\s*[\s\S]*END;\s*\/"
+            triggersRegex = r"CREATE\s+OR\s+REPLACE\s+TRIGGER\s+\w+\sAFTER\s[INSERT|UPDATE|DELETE]\sOF\s\w+\sON\s\w+\sFOR\sEACH\sROW\s*DECLARE\s+.*\s+BEGIN\s*[\s\S]*END;\s*\/"
+            viewsRegex = r"CREATE\s+VIEW\s+\w+\sAS\s[\s\S]*?;"
 
             self.sqlprocedures = re.findall(proceduresRegex, full_sql)
             self.sqltriggers = re.findall(triggersRegex, full_sql)
+            self.sqlViews = re.findall(viewsRegex, full_sql)
             
             #Lets verify if the tables already exist if so return
             regexTables = re.findall(r"CREATE TABLE (\w+)", full_sql)
@@ -418,6 +518,21 @@ class mongoDBController():
                     pass
 
                 commandId+=1
+
+            #Lets execute the trigger and procedures for that we will remove all the ; in the trigger or procedure
+            for procedure in self.sqlprocedures:
+                try:
+                    cursor.execute(procedure.strip())
+                except Exception as e:
+                    print(f"Error creating the procedure in Oracle: {procedure.strip()}")
+                    print("Exception: ", e)
+
+            for trigger in self.sqltriggers:
+                try:
+                    cursor.execute(trigger.strip())
+                except Exception as e:
+                    print(f"Error creating the trigger in Oracle: {trigger.strip()}")
+                    print("Exception: ", e)
 
             # Lets get the procedures
             print("Tables created in Oracle")
