@@ -61,7 +61,6 @@ NOCACHE;
    Create Tables, PK and FK
 ****************************/
 
-
 CREATE TABLE appointment (
     scheduled_on     DATE,
     appointment_date DATE,

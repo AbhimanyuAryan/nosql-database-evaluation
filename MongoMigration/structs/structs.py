@@ -1,5 +1,5 @@
 class Patient:
-    def __init__(self, patient_id, fname, lname, blood_type, phone, email, gender, policy_number, birthday, medicalHistory, insurance, emergencyContacts, episodes):
+    def __init__(self, patient_id, fname, lname, blood_type, phone, email, gender, birthday, medicalHistory, insurance, emergencyContacts, episodes):
         self.patient_id = patient_id
         self.fname = fname
         self.lname = lname
@@ -7,7 +7,6 @@ class Patient:
         self.phone = phone
         self.email = email
         self.gender = gender
-        self.policy_number = policy_number
         self.birthday = birthday
         self.medical_histories = medicalHistory
         self.insurance = insurance
@@ -25,8 +24,8 @@ class Patient:
             'gender': self.gender,
             'insurance': self.insurance.to_json(),
             'birthday': self.birthday,
-            'medical_history': [medical_history.to_json() for medical_history in self.medical_histories],
-            'emergency_contacts': [emergency_contact.__dict__ for emergency_contact in self.emergency_contacts],
+           'medical_history': [medical_history.to_json() for medical_history in self.medical_histories],
+           'emergency_contacts': [emergency_contact.to_json() for emergency_contact in self.emergency_contacts],
             'episodes': [episode.to_json() for episode in self.episodes]
         }
     
@@ -96,10 +95,10 @@ class Episode:
             'episode_id': self.episode_id,
             'patient_id': self.patient_id,
             'prescriptions': [prescription.to_json() for prescription in self.prescriptions],
-            'bills': [bill.__dict__ for bill in self.bills],
-            'screenings': [screening.__dict__ for screening in self.screenings],
+            'bills': [bill.to_json() for bill in self.bills],
+            'screenings': [screening.to_json() for screening in self.screenings],
             'appointments': [appointment.to_json() for appointment in self.appointments],
-            'hospitalizations': [hospitalization.to_json() for hospitalization in self.hospitalizations]
+            #'hospitalizations': [hospitalization.to_json() for hospitalization in self.hospitalizations]
         }
 
 class Prescription:
@@ -233,7 +232,7 @@ class Room:
         }
 
 class Employee:
-    def __init__(self, employee_id, fname, lname, dateJoining, dateSeparation, email, address, department, is_active):
+    def __init__(self, employee_id, fname, lname, dateJoining, dateSeparation, email, address,ssn, department, is_active):
         self.employee_id = employee_id
         self.fname = fname
         self.lname = lname
@@ -241,6 +240,7 @@ class Employee:
         self.dateSeparation = dateSeparation
         self.email = email
         self.address = address
+        self.ssn = ssn
         self.department = department
         self.is_active = is_active
     
@@ -254,6 +254,7 @@ class Employee:
             'email': self.email,
             'address': self.address,
             'department': self.department.to_json(),
+            'ssn': self.ssn,
             'is_active': self.is_active
         }
     

@@ -108,6 +108,7 @@ class mongoDBController():
             self.dropDBs()
             self.ensureDBs()
             self.migrate()
+            self.createViews()
             self.OracleConnection.close()
             self.MongoConnection.close()
             print("Migration Completed")
@@ -261,11 +262,12 @@ class mongoDBController():
                             emergency_contacts_list.append(EmergencyContact(emergencyContactName, emergencyContactPhone, emergencyContactRelation))
                         except Exception as e:
                             pass
-                    
+                
                     #Lets get the patients episodes
                     cursor.execute(f"SELECT * FROM EPISODE WHERE PATIENT_IDPATIENT = {patientID}")
                     episodes = cursor.fetchall()
                     episodesList = []
+                    
                     for episode in episodes:
                         episodeId = episode[0]
                         #Lets get the prescriptions of the episode
@@ -315,18 +317,25 @@ class mongoDBController():
                                 screeningTechnicianId = screening[3]
 
                                 #Lets get the technician data
-                                cursor.execute(f"SELECT STAFF_EMP_ID FROM TECHNICIAN WHERE IDTECHNICIAN = {screeningTechnicianId}")
+                                cursor.execute(f"SELECT STAFF_EMP_ID FROM TECHNICIAN WHERE STAFF_EMP_ID = {screeningTechnicianId}")
                                 technician = cursor.fetchone()
                                 screeningTechnicianId = technician[0]
 
                                 #Lets get the technician data by querying the staff table
                                 cursor.execute(f"SELECT * FROM STAFF WHERE EMP_ID = {screeningTechnicianId}")
                                 technician = cursor.fetchone()
-                                
-                                technician = Employee(technician[0], technician[1], technician[2], technician[3], technician[4], technician[5], technician[6], technician[7], technician[8])
+                                technicianDeptId = technician[8]
 
+                                #Lets get the department data
+                                cursor.execute(f"SELECT * FROM DEPARTMENT WHERE IDDEPARTMENT = {technicianDeptId}")
+                                technicianDept = cursor.fetchone()
+                                technicianDept = Department(technicianDept[0], technicianDept[1], technicianDept[2], technicianDept[3])
 
-                                screenings_list.append(LabScreening(screeningId, screeningCost, screeningDate, technician))
+                                technician = Employee(technician[0], technician[1], technician[2], technician[3], technician[4], technician[5], technician[6], technician[7], technicianDept, technician[9])
+
+                                screen = LabScreening(screeningId, screeningCost, screeningDate, technician)
+
+                                screenings_list.append(screen)
                             except Exception as e:
                                 print("Error getting the screenings of the episode")
                                 print("Exception: ", e)
@@ -337,24 +346,31 @@ class mongoDBController():
                         appointments_list = []
                         for appointment in appointments:
                             try:
-                                appointmentId = appointment[0]
+                                scheduledOn = appointment[0]
                                 appointmentDate = appointment[1]
-                                appointmentDoctorId = appointment[2]
-                                appointmentRoomId = appointment[3]
-                                appointmentStatus = appointment[4]
+                                appointmentTime = appointment[2]
+                                appointmentDoctorId = appointment[3]
+                                appointmentEpisodeId = appointment[4]
 
                                 #Lets get the doctor data
-                                cursor.execute(f"SELECT STAFF_EMP_ID FROM DOCTOR WHERE IDDOCTOR = {appointmentDoctorId}")
+                                cursor.execute(f"SELECT * FROM DOCTOR WHERE emp_id = {appointmentDoctorId}")
                                 doctor = cursor.fetchone()
-                                appointmentDoctorId = doctor[0]
+                                qualifications = doctor[1]
 
                                 #Lets get the doctor data by querying the staff table
                                 cursor.execute(f"SELECT * FROM STAFF WHERE EMP_ID = {appointmentDoctorId}")
                                 doctor = cursor.fetchone()
+                                doctorDeptId = doctor[8]
                                 
-                                doctor = Employee(doctor[0], doctor[1], doctor[2], doctor[3], doctor[4], doctor[5], doctor[6], doctor[7], doctor[8])
+                                #Lets get the department data
+                                cursor.execute(f"SELECT * FROM DEPARTMENT WHERE IDDEPARTMENT = {doctorDeptId}")
+                                doctorDept = cursor.fetchone()
+                                doctorDept = Department(doctorDept[0], doctorDept[1], doctorDept[2], doctorDept[3])
+
+
+                                doctor = Doctor(Employee(doctor[0], doctor[1], doctor[2], doctor[3], doctor[4], doctor[5], doctor[6], doctor[7], doctorDept, doctor[9]), qualifications)
                                 #scheduled_on, appointment_date, appointment_time, doctor
-                                appointments_list.append(Appointment(appointmentId, appointmentDate, doctor, appointmentStatus))
+                                appointments_list.append(Appointment(scheduledOn, appointmentDate, appointmentTime, doctor))
                             except Exception as e:
                                 print("Error getting the appointments of the episode")
                                 print("Exception: ", e)
@@ -365,30 +381,29 @@ class mongoDBController():
                         hospitalizations_list = []
                         for hospitalization in hospitalizations:
                             try:
-                                hospitalizationId = hospitalization[0]
-                                hospitalizationAdmissionDate = hospitalization[1]
-                                hospitalizationDischargeDate = hospitalization[2]
-                                hospitalizationRoomId = hospitalization[3]
+                                hospitalizationAdmissionDate = hospitalization[0]
+                                hospitalizationDischargeDate = hospitalization[1]
+                                hospitalizationRoomId = hospitalization[2]
+                                episodeId = hospitalization[3]
                                 hospitalizationResponsibleNurseId = hospitalization[4]
-
-                                #Lets get the nurse data
-                                cursor.execute(f"SELECT STAFF_EMP_ID FROM NURSE WHERE IDNURSE = {hospitalizationResponsibleNurseId}")
-                                nurse = cursor.fetchone()
-                                hospitalizationResponsibleNurseId = nurse[0]
+                                
 
                                 #Lets get the nurse data by querying the staff table
                                 cursor.execute(f"SELECT * FROM STAFF WHERE EMP_ID = {hospitalizationResponsibleNurseId}")
                                 nurse = cursor.fetchone()
-                                
-                                nurse = Employee(nurse[0], nurse[1], nurse[2], nurse[3], nurse[4], nurse[5], nurse[6], nurse[7], nurse[8])
-                                
 
+                                #Lets get the department data
+                                cursor.execute(f"SELECT * FROM DEPARTMENT WHERE IDDEPARTMENT = {nurse[8]}")
+                                nurseDept = cursor.fetchone()
+                                nurseDept = Department(nurseDept[0], nurseDept[1], nurseDept[2], nurseDept[3])
+                                nurse = Employee(nurse[0], nurse[1], nurse[2], nurse[3], nurse[4], nurse[5], nurse[6], nurse[7], nurseDept, nurse[9])
+                                
                                 #Lets get the room data
                                 cursor.execute(f"SELECT * FROM ROOM WHERE IDROOM = {hospitalizationRoomId}")
                                 room = cursor.fetchone()
-                                room = Room(room[0], room[1], room[2], room[3], room[4])
+                                room = Room(room[0], room[1], room[2])
 
-                                hospitalizations_list.append(Hospitalization(hospitalizationId, hospitalizationAdmissionDate, hospitalizationDischargeDate, room, nurse))
+                                hospitalizations_list.append(Hospitalization(hospitalizationAdmissionDate, hospitalizationDischargeDate, room, nurse))
                             
                             #Verify for another migration in order to get to know why the episodes are empty
                             except Exception as e:
@@ -396,79 +411,62 @@ class mongoDBController():
                                 print("Exception: ", e)
 
                         episodesList.append(Episode(episodeId, patientID, prescriptions_list, bills_list, screenings_list, appointments_list, hospitalizations_list))
-                      
+                    
                     #Lets conver the Patient to  a json object and insert it into the MongoDB
-                    patient = Patient(patientID, patientFname, patientLname, patientBloodType, patientPhone, patientEmail, patientGender, patientPolicyNumber, patientBirthday, medical_histories_list, patientInsurance, emergency_contacts_list, episodesList)
-                    patient = patient.to_json()
-                    self.mongoDB["Patient"].insert_one(patient)
+                    patient = Patient(patientID, patientFname, patientLname, patientBloodType, patientPhone, patientEmail, patientGender, patientBirthday, medical_histories_list, patientInsurance, emergency_contacts_list, episodesList)
+                    self.mongoDB["Patient"].insert_one(patient.to_json())
 
                 except Exception as e:
                     print("Error migrating patient")
                     print("Exception: ", e)
 
             #Now that we have our database we will create the views
-            for view in self.sqlViews:
-                #Lets get the view name
-                viewName = re.findall(r"CREATE VIEW (\w+)", view)[0]
-
-                #For each Patient apoointment we will get 
-                #scheduled_on, appointment_date, appointment_time, doctor, department name, patient
-                
-                self.mongoDB["Patient"].createView(
-                    viewName,
-                    "Patient",
-                    [
-                        {
-                            "$unwind": "$episodes"
-                        },
-                        {
-                            "$unwind": "$episodes.appointments"
-                        },
-                        {
-                            "$lookup": {
-                                "from": "Staff",
-                                "localField": "episodes.appointments.doctor.emp_id",
-                                "foreignField": "emp_id",
-                                "as": "doctor"
-                            }
-                        },
-                        {
-                            "$unwind": "$doctor"
-                        },
-                        {
-                            "$lookup": {
-                                "from": "Department",
-                                "localField": "doctor.iddepartment",
-                                "foreignField": "iddepartment",
-                                "as": "department"
-                            }
-                        },
-                        {
-                            "$unwind": "$department"
-                        },
-                        {
-                            "$project": {
-                                "appointment_scheduled_date": "$episodes.appointments.scheduled_on",
-                                "appointment_date": "$episodes.appointments.appointment_date",
-                                "appointment_time": "$episodes.appointments.appointment_time",
-                                "doctor_id": "$doctor.emp_id",
-                                "doctor_qualifications": "$doctor.qualifications",
-                                "department_name": "$department.dept_name",
-                                "patient_first_name": "$patientFname",
-                                "patient_last_name": "$patientLname",
-                                "patient_blood_type": "$patientBloodType",
-                                "patient_phone": "$patientPhone",
-                                "patient_email": "$patientEmail",
-                                "patient_gender": "$patientGender"
-                            }
-                        }
-                    ]
-                )
-
-
+           
         except Exception as e:
             print("Error migrating from Oracle to MongoDB")
             print("Exception: ", e)
+
+    def createViews(self):
+         for view in self.sqlViews:
+            #Lets get the view name
+            viewName = re.findall(r"CREATE VIEW (\w+)", view)[0]
+
+            #For each Patient apoointment we will get 
+            #scheduled_on, appointment_date, appointment_time, doctor, department name, patient
+            print("Creating view: ", viewName)
+            self.mongoDB.create_collection(
+                viewName,
+                viewOn = "Patient",
+                pipeline=[
+                {
+                    '$unwind': {
+                        'path': '$episodes'
+                    }
+                }, {
+                    '$unwind': {
+                        'path': '$episodes.appointments'
+                    }
+                }, {
+                    '$project': {
+                        'appointment_scheduled_date': '$episodes.appointments.scheduled_on', 
+                        'appointment_date': '$episodes.appointments.appointment_date', 
+                        'appointment_time': '$episodes.appointments.appointment_time', 
+                        'doctor_id': '$episodes.appointments.doctor.employee.employee_id', 
+                        'doctor_qualifications': '$episodes.appointments.doctor.qualifications', 
+                        'department_name': '$episodes.appointments.doctor.employee.department.dept_name', 
+                        'patient_first_name': '$fname', 
+                        'patient_last_name': '$lname', 
+                        'patient_blood_type': '$blood_type', 
+                        'patient_phone': '$phone', 
+                        'patient_email': '$email', 
+                        'patient_gender': '$gender'
+                    }
+                }
+                ])
+            
+            print("View created in MongoDB")
+
+
 
     def ensureOracle(self):
         sql_command=""
