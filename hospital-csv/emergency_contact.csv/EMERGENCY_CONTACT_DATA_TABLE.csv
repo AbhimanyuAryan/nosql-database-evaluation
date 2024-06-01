@@ -1,0 +1,20 @@
+"CONTACT_NAME","PHONE","RELATION","IDPATIENT"
+"John Doe","111-222-3333","Father",1
+"Jane Smith","222-333-4444","Mother",2
+"Alice Johnson","333-444-5555","Sister",3
+"Bob Brown","444-555-6666","Brother",4
+"Sarah Wilson","555-666-7777","Spouse",5
+"Michael Clark","666-777-8888","Friend",6
+"Emily White","777-888-9999","Relative",7
+"David Lee","888-999-0000","Parent",8
+"Jennifer Martinez","999-000-1111","Sibling",9
+"Daniel Harris","000-111-2222","Friend",10
+"Matthew Evans","222-333-4444","Spouse",7
+"Olivia Rodriguez","333-444-5555","Parent",4
+"James Wilson","444-555-6666","Sibling",6
+"Ava Anderson","555-666-7777","Friend",7
+"Logan Taylor","666-777-8888","Spouse",77
+"Sophia Scott","777-888-9999","Relative",66
+"Ethan Lewis","888-999-0000","Sibling",55
+"Mia Martinez","999-000-1111","Parent",44
+"Noah Harris","000-111-2222","Friend",22

@@ -1,0 +1,21 @@
+"RECORD_ID","CONDITION","RECORD_DATE","IDPATIENT"
+27,"Flu",15-01-23,1
+28,"Allergy",05-03-23,2
+29,"Broken Arm",20-04-23,3
+30,"Pneumonia",10-07-23,4
+31,"Headache",08-09-23,5
+32,"Asthma",15-10-23,6
+33,"Diabetes",25-12-23,7
+34,"Hypertension",14-02-24,8
+35,"Arthritis",01-04-24,9
+36,"Migraine",18-06-24,10
+37,"Common Cold",10-02-23,11
+38,"Anxiety",05-05-23,12
+39,"Stomach Ulcer",22-08-23,13
+40,"Bronchitis",30-10-23,14
+41,"Rheumatoid Arthritis",10-12-23,15
+42,"Insomnia",18-01-24,6
+43,"High Cholesterol",03-03-24,5
+44,"Concussion",20-05-24,3
+45,"Gastritis",15-07-24,1
+46,"Osteoporosis",05-09-24,3
