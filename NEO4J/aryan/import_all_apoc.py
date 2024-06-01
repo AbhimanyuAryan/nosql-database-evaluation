@@ -1,5 +1,6 @@
 import cx_Oracle
 from py2neo import Graph
+from datetime import datetime
 
 def fetch_all_values_from_table(table_name, host, port, service_name, user, password):
     connection = None
@@ -29,13 +30,25 @@ def fetch_all_values_from_table(table_name, host, port, service_name, user, pass
         if connection:
             connection.close()
 
-def import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, create_node_query):
+def parse_date(date_value, format):
+    if date_value is None:
+        return None
+    if isinstance(date_value, datetime):
+        return date_value.isoformat()
+    return datetime.strptime(date_value, format).isoformat()
+
+def import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, create_node_query, date_fields=None, date_format='%d-%m-%y'):
     # Connect to Neo4j
     graph = Graph(neo4j_uri, auth=(neo4j_user, neo4j_password))
 
     for row in data:
-        # Convert the row to a dictionary with appropriate keys
         parameters = {f"col{i}": value for i, value in enumerate(row)}
+        
+        # Handle date parsing
+        if date_fields:
+            for field in date_fields:
+                parameters[field] = parse_date(parameters[field], date_format)
+        
         # Execute the Cypher query to create a node
         graph.run(create_node_query, parameters=parameters)
         print(f"Imported data: {row}")
@@ -102,19 +115,19 @@ tables_and_queries = {
             })
         """
     },
-    # "HOSPITALIZATION": {
-    #     "query": """
-    #         WITH apoc.date.parse($col0, 'ms', 'dd-MM-yy') AS admissionMillis,
-    #              apoc.date.parse($col1, 'ms', 'dd-MM-yy') AS dischargeMillis
-    #         CREATE (:Hospitalization {
-    #             ADMISSION_DATE: date(datetime({epochMillis: admissionMillis})),
-    #             DISCHARGE_DATE: CASE WHEN $col1 IS NOT NULL THEN date(datetime({epochMillis: dischargeMillis})) ELSE NULL END,
-    #             ROOM_IDROOM: toInteger($col2),
-    #             IDEPISODE: toInteger($col3),
-    #             RESPONSIBLE_NURSE: toInteger($col4)
-    #         })
-    #     """
-    # },
+    "HOSPITALIZATION": {
+        "query": """
+            CREATE (:Hospitalization {
+                ADMISSION_DATE: datetime($col0),
+                DISCHARGE_DATE: CASE WHEN $col1 IS NOT NULL THEN datetime($col1) ELSE NULL END,
+                ROOM_IDROOM: toInteger($col2),
+                IDEPISODE: toInteger($col3),
+                RESPONSIBLE_NURSE: toInteger($col4)
+            })
+        """,
+        "date_fields": ["col0", "col1"],
+        "date_format": "%d-%m-%y"
+    },
     "ROOM": {
         "query": """
             CREATE (:Room {
@@ -132,33 +145,35 @@ tables_and_queries = {
             })
         """
     },
-    # "BILL": {
-    #     "query": """
-    #         WITH apoc.date.parse($col6, 'ms', 'yy-MM-dd hh:mm:ss.SSSSSSSSS a') AS registeredMillis
-    #         CREATE (:Bill {
-    #             IDBILL: toInteger($col0),
-    #             ROOM_COST: toInteger($col1),
-    #             TEST_COST: toInteger($col2),
-    #             OTHER_CHARGES: toInteger($col3]),
-    #             TOTAL: toInteger($col4),
-    #             IDEPISODE: toInteger($col5),
-    #             REGISTERED_AT: datetime({epochMillis: registeredMillis}),
-    #             PAYMENT_STATUS: $col7
-    #         })
-    #     """
-    # },
-    # "PRESCRIPTION": {
-    #     "query": """
-    #         WITH apoc.date.parse($col1, 'ms', 'dd-MM-yy') AS prescriptionMillis
-    #         CREATE (:Prescription {
-    #             IDPRESCRIPTION: toInteger($col0),
-    #             PRESCRIPTION_DATE: date(datetime({epochMillis: prescriptionMillis})),
-    #             DOSAGE: toInteger($col2),
-    #             IDMEDICINE: toInteger($col3),
-    #             IDEPISODE: toInteger($col4)
-    #         })
-    #     """
-    # },
+    "BILL": {
+        "query": """
+            CREATE (:Bill {
+                IDBILL: toInteger($col0),
+                ROOM_COST: toInteger($col1),
+                TEST_COST: toInteger($col2),
+                OTHER_CHARGES: toInteger($col3),
+                TOTAL: toInteger($col4),
+                IDEPISODE: toInteger($col5),
+                REGISTERED_AT: datetime($col6),
+                PAYMENT_STATUS: $col7
+            })
+        """,
+        "date_fields": ["col6"],
+        "date_format": "%d-%m-%y %H:%M:%S.%f"
+    },
+    "PRESCRIPTION": {
+        "query": """
+            CREATE (:Prescription {
+                IDPRESCRIPTION: toInteger($col0),
+                PRESCRIPTION_DATE: datetime($col1),
+                DOSAGE: toInteger($col2),
+                IDMEDICINE: toInteger($col3),
+                IDEPISODE: toInteger($col4)
+            })
+        """,
+        "date_fields": ["col1"],
+        "date_format": "%d-%m-%y"
+    },
     "MEDICINE": {
         "query": """
             CREATE (:Medicine {
@@ -169,47 +184,49 @@ tables_and_queries = {
             })
         """
     },
-    # "APPOINTMENT": {
-    #     "query": """
-    #         WITH apoc.date.parse($col0, 'ms', 'dd-MM-yy') AS scheduledMillis,
-    #              apoc.date.parse($col1, 'ms', 'dd-MM-yy') AS appointmentMillis
-    #         CREATE (:Appointment {
-    #             SCHEDULED_ON: date(datetime({epochMillis: scheduledMillis})),
-    #             APPOINTMENT_DATE: date(datetime({epochMillis: appointmentMillis})),
-    #             APPOINTMENT_TIME: $col2,
-    #             IDDOCTOR: toInteger($col3),
-    #             IDEPISODE: toInteger($col4)
-    #         })
-    #     """
-    # },
-    # "LAB_SCREENING": {
-    #     "query": """
-    #         WITH apoc.date.parse($col2, 'ms', 'dd-MM-yy') AS testMillis
-    #         CREATE (:Lab_Screening {
-    #             LAB_ID: toInteger($col0),
-    #             TEST_COST: toFloat($col1),
-    #             TEST_DATE: date(datetime({epochMillis: testMillis})),
-    #             IDTECHNICIAN: toInteger($col3),
-    #             EPISODE_IDEPISODE: toInteger($col4)
-    #         })
-    #     """
-    # },
-    # "PATIENT": {
-    #     "query": """
-    #         WITH apoc.date.parse($col8, 'ms', 'dd-MM-yy') AS birthMillis
-    #         CREATE (:Patient {
-    #             IDPATIENT: toInteger($col0),
-    #             PATIENT_FNAME: $col1,
-    #             PATIENT_LNAME: $col2,
-    #             BLOOD_TYPE: $col3,
-    #             PHONE: $col4,
-    #             EMAIL: $col5,
-    #             GENDER: $col6,
-    #             POLICY_NUMBER: $col7,
-    #             BIRTHDAY: date(datetime({epochMillis: birthMillis}))
-    #         })
-    #     """
-    # },
+    "APPOINTMENT": {
+        "query": """
+            CREATE (:Appointment {
+                SCHEDULED_ON: datetime($col0),
+                APPOINTMENT_DATE: datetime($col1),
+                APPOINTMENT_TIME: $col2,
+                IDDOCTOR: toInteger($col3),
+                IDEPISODE: toInteger($col4)
+            })
+        """,
+        "date_fields": ["col0", "col1"],
+        "date_format": "%d-%m-%y"
+    },
+    "LAB_SCREENING": {
+        "query": """
+            CREATE (:Lab_Screening {
+                LAB_ID: toInteger($col0),
+                TEST_COST: toFloat($col1),
+                TEST_DATE: datetime($col2),
+                IDTECHNICIAN: toInteger($col3),
+                EPISODE_IDEPISODE: toInteger($col4)
+            })
+        """,
+        "date_fields": ["col2"],
+        "date_format": "%d-%m-%y"
+    },
+    "PATIENT": {
+        "query": """
+            CREATE (:Patient {
+                IDPATIENT: toInteger($col0),
+                PATIENT_FNAME: $col1,
+                PATIENT_LNAME: $col2,
+                BLOOD_TYPE: $col3,
+                PHONE: $col4,
+                EMAIL: $col5,
+                GENDER: $col6,
+                POLICY_NUMBER: $col7,
+                BIRTHDAY: datetime($col8)
+            })
+        """,
+        "date_fields": ["col8"],
+        "date_format": "%d-%m-%y"
+    },
     "EMERGENCY_CONTACT": {
         "query": """
             CREATE (:Emergency_Contact {
@@ -234,24 +251,27 @@ tables_and_queries = {
             })
         """
     },
-    # "MEDICAL_HISTORY": {
-    #     "query": """
-    #         WITH apoc.date.parse($col2, 'ms', 'dd-MM-yy') AS recordMillis
-    #         CREATE (:Medical_History {
-    #             RECORD_ID: toInteger($col0),
-    #             CONDITION: $col1,
-    #             RECORD_DATE: date(datetime({epochMillis: recordMillis})),
-    #             IDPATIENT: toInteger($col3)
-    #         })
-    #     """
-    # }
+    "MEDICAL_HISTORY": {
+        "query": """
+            CREATE (:Medical_History {
+                RECORD_ID: toInteger($col0),
+                CONDITION: $col1,
+                RECORD_DATE: datetime($col2),
+                IDPATIENT: toInteger($col3)
+            })
+        """,
+        "date_fields": ["col2"],
+        "date_format": "%d-%m-%y"
+    }
 }
 
 # Fetch data from Oracle and import to Neo4j
 for table_name, info in tables_and_queries.items():
     data = fetch_all_values_from_table(table_name, oracle_host, oracle_port, oracle_service_name, oracle_user, oracle_password)
     if data:
-        import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, info['query'])
+        date_fields = info.get('date_fields')
+        date_format = info.get('date_format', '%d-%m-%y')
+        import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, info['query'], date_fields, date_format)
     else:
         print(f"No data to import for table: {table_name}")
 
