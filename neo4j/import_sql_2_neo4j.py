@@ -75,7 +75,8 @@ tables_and_queries = {
                 DEPT_NAME: $col2,
                 EMP_COUNT: toInteger($col3)
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (d:Department) REQUIRE d.IDDEPARTMENT IS UNIQUE;"
     },
     "STAFF": {
         "query": """
@@ -91,7 +92,8 @@ tables_and_queries = {
                 IS_ACTIVE_STATUS: $col8,
                 IDDEPARTMENT: $col9
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (s:Staff) REQUIRE s.EMP_ID IS UNIQUE;"
     },
     "DOCTOR": {
         "query": """
@@ -99,21 +101,24 @@ tables_and_queries = {
                 EMP_ID: toInteger($col0),
                 QUALIFICATIONS: $col1
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (d:Doctor) REQUIRE d.EMP_ID IS UNIQUE;"
     },
     "TECHNICIAN": {
         "query": """
             CREATE (:Technician {
                 STAFF_EMP_ID: toInteger($col0)
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (t:Technician) REQUIRE t.STAFF_EMP_ID IS UNIQUE;"
     },
     "NURSE": {
         "query": """
             CREATE (:Nurse {
                 STAFF_EMP_ID: toInteger($col0)
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (n:Nurse) REQUIRE n.STAFF_EMP_ID IS UNIQUE;"
     },
     "HOSPITALIZATION": {
         "query": """
@@ -125,6 +130,7 @@ tables_and_queries = {
                 RESPONSIBLE_NURSE: toInteger($col4)
             })
         """,
+        "constraints": "CREATE CONSTRAINT FOR (h:Hospitalization) REQUIRE h.IDEPISODE IS UNIQUE;",
         "date_fields": ["col0", "col1"],
         "date_format": "%d-%m-%y"
     },
@@ -135,7 +141,8 @@ tables_and_queries = {
                 ROOM_TYPE: $col1,
                 ROOM_COST: toInteger($col2)
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (r:Room) REQUIRE r.IDROOM IS UNIQUE;"
     },
     "EPISODE": {
         "query": """
@@ -143,7 +150,8 @@ tables_and_queries = {
                 IDEPISODE: toInteger($col0),
                 PATIENT_IDPATIENT: toInteger($col1)
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (e:Episode) REQUIRE e.IDEPISODE IS UNIQUE;"
     },
     "BILL": {
         "query": """
@@ -158,6 +166,7 @@ tables_and_queries = {
                 PAYMENT_STATUS: $col7
             })
         """,
+        "constraints": "CREATE CONSTRAINT FOR (b:Bill) REQUIRE b.IDBILL IS UNIQUE;",
         "date_fields": ["col6"],
         "date_format": "%d-%m-%y %H:%M:%S.%f"
     },
@@ -171,6 +180,7 @@ tables_and_queries = {
                 IDEPISODE: toInteger($col4)
             })
         """,
+        "constraints": "CREATE CONSTRAINT FOR (p:Prescription) REQUIRE p.IDPRESCRIPTION IS UNIQUE;",
         "date_fields": ["col1"],
         "date_format": "%d-%m-%y"
     },
@@ -182,7 +192,8 @@ tables_and_queries = {
                 M_QUANTITY: toInteger($col2),
                 M_COST: toFloat($col3)
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (m:Medicine) REQUIRE m.IDMEDICINE IS UNIQUE;"
     },
     "APPOINTMENT": {
         "query": """
@@ -194,6 +205,7 @@ tables_and_queries = {
                 IDEPISODE: toInteger($col4)
             })
         """,
+        "constraints": "CREATE CONSTRAINT FOR (a:Appointment) REQUIRE (a.APPOINTMENT_DATE, a.APPOINTMENT_TIME, a.IDDOCTOR, a.IDEPISODE) IS UNIQUE;",
         "date_fields": ["col0", "col1"],
         "date_format": "%d-%m-%y"
     },
@@ -207,6 +219,7 @@ tables_and_queries = {
                 EPISODE_IDEPISODE: toInteger($col4)
             })
         """,
+        "constraints": "CREATE CONSTRAINT FOR (ls:Lab_Screening) REQUIRE ls.LAB_ID IS UNIQUE;",
         "date_fields": ["col2"],
         "date_format": "%d-%m-%y"
     },
@@ -224,6 +237,7 @@ tables_and_queries = {
                 BIRTHDAY: datetime($col8)
             })
         """,
+        "constraints": "CREATE CONSTRAINT FOR (p:Patient) REQUIRE p.IDPATIENT IS UNIQUE;",
         "date_fields": ["col8"],
         "date_format": "%d-%m-%y"
     },
@@ -235,7 +249,8 @@ tables_and_queries = {
                 RELATION: $col2,
                 IDPATIENT: toInteger($col3)
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (ec:Emergency_Contact) REQUIRE (ec.IDPATIENT, ec.PHONE) IS UNIQUE;"
     },
     "INSURANCE": {
         "query": """
@@ -249,7 +264,8 @@ tables_and_queries = {
                 DENTAL: $col6,
                 OPTICAL: $col7
             })
-        """
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (i:Insurance) REQUIRE i.POLICY_NUMBER IS UNIQUE;"
     },
     "MEDICAL_HISTORY": {
         "query": """
@@ -260,10 +276,19 @@ tables_and_queries = {
                 IDPATIENT: toInteger($col3)
             })
         """,
+        "constraints": "CREATE CONSTRAINT FOR (mh:Medical_History) REQUIRE mh.RECORD_ID IS UNIQUE;",
         "date_fields": ["col2"],
         "date_format": "%d-%m-%y"
     }
 }
+
+# Connect to Neo4j and create constraints
+graph = Graph(neo4j_uri, auth=(neo4j_user, neo4j_password))
+for table_name, info in tables_and_queries.items():
+    constraint_query = info.get('constraints')
+    if constraint_query:
+        graph.run(constraint_query)
+        print(f"Created constraint for {table_name}")
 
 # Fetch data from Oracle and import to Neo4j
 for table_name, info in tables_and_queries.items():
@@ -370,7 +395,6 @@ relationships = [
 ]
 
 # Execute relationship queries in Neo4j
-graph = Graph(neo4j_uri, auth=(neo4j_user, neo4j_password))
 for query in relationships:
     graph.run(query)
     print(f"Executed relationship query: {query}")
