@@ -21,14 +21,14 @@ class mongoDBController():
         self.OracleConnection = self.connect(option="Oracle")
         self.MongoConnection = self.connect(option="MongoDB")  
         if self.OracleConnection!=None and self.MongoConnection!=None:
-            #self.dropDBs()
-            #self.ensureDBs()
-            #self.migrate()
-            #self.createViews()
+            self.dropDBs()
+            self.ensureDBs()
+            self.migrate()
+            self.createViews()
             if self.testMongoAPI():
-                #self.createTriggers()
-                
-                pass    
+                functionId = self.createAtlasFunction("teste")
+                if functionId:
+                    self.createTrigger(functionId)
             self.runQueries()
 
             self.OracleConnection.close()
@@ -89,10 +89,6 @@ class mongoDBController():
 
             print("Oracle database dropped")
 
-            #Lets drop the mongo database
-            print("Dropping Mongo databases...")
-            self.MongoConnection.drop_database("BDNOSQLTP")
-            print("MongoDB database dropped")
 
         except Exception as e:
             print("Error dropping the Oracle database")
@@ -100,6 +96,8 @@ class mongoDBController():
         
         #Drop the MongoDB database
         try:
+            #Lets drop the mongo database
+            print("Dropping Mongo databases...")
             self.MongoConnection.drop_database("BDNOSQLTP")
             print("MongoDB database dropped")
         except Exception as e:
@@ -118,10 +116,10 @@ class mongoDBController():
             self.ensureMongo()
             return True
         except Exception as e:
-            print("Error creating the databases")
-            print("Exception: ", e)
             return False
         
+
+
     def migrate(self):
 
         try:
@@ -508,13 +506,13 @@ class mongoDBController():
     def createTrigger(self, trigger, functionId):
         #https://www.mongodb.com/docs/atlas/app-services/admin/api/v3/#tag/triggers/operation/adminCreateTrigger
         try:
-            groupId = 0
-            appId = 0
+            groupId = self.mongoGroupId
+            appId = "data-moivwoh"
             uri = f"https://services.cloud.mongodb.com/api/admin/v3.0/groups/{groupId}/apps/{appId}/triggers"
 
             headers = {
                 "Content-Type": "application/json",
-                "Authorization": "Bearer <token>"
+                f"Authorization": "Bearer {self.mongoBearer}"
             }
 
             payload = {
@@ -617,20 +615,8 @@ class mongoDBController():
     def createAtlasFunction(self, function):
         #https://www.mongodb.com/docs/atlas/app-services/admin/api/v3/#tag/functions/operation/adminCreateFunction
         try:
-            projectId = self.mongoGroupId
+            appId = "data-moivwoh"
             groupId = self.mongoProjectId
-            dataAPIuri = "https://eu-west-2.aws.data.mongodb-api.com/app/data-moivwoh/endpoint/data/v1"
-
-            auth = HTTPDigestAuth('cpfdagvq', 'b08b1acc-b0c0-4d3c-8004-235e4a18619b')
-            payload = json.dumps({
-                "collection": "Patient",
-                "database": "bdnosql",
-                "dataSource": "bdnosql",
-                "projection": {
-                    "_id": 1
-                }
-            })
-        
 
             functionCode = """
                 exports = async function(changeEvent) {
@@ -717,17 +703,32 @@ class mongoDBController():
                 }
                 };
             """
-            headers = {"Accept"       : "application/vnd.atlas.2023-01-01+json",
-                    "Content-Type" : "application/json"}
 
-            url = f"https://cloud.mongodb.com/api/atlas/v2/groups"
-            response = requests.get(url, auth=auth, headers=headers)
+            
+            url = f"https://services.cloud.mongodb.com/api/admin/v3.0/groups/{groupId}/apps/{appId}/functions"
+            payload = json.dumps({
+                "name": function,
+                "private" : False,
+                "source" : functionCode
+            })
+            headers = {
+            'Content-Type': 'application/json',
+            'Access-Control-Request-Headers': '*',
+            f'Authorization': 'Bearer {self.mongoBearer}',
+            'Accept': 'application/ejson'
+            }
 
-            print(response.text)
+
+            response = requests.request("POST", url, headers=headers, data=payload)
+            if (response.status_code == 201):
+                print("Function created in MongoDB")
+                
+                return response.json()["_id"]
+            else:
+                return False
+            
         except Exception as e:
-            print("Error creating the function in MongoDB")
-            print("Exception: ", e)
-            return None
+            return False
 
 
     def connect(self, option):
