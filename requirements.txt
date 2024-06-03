@@ -1,3 +1,0 @@
-oracledb
-pymongo
-python-dotenv
