@@ -340,6 +340,8 @@ ALTER TABLE technician
     ADD CONSTRAINT fk_technician_staff1 FOREIGN KEY ( staff_emp_id )
         REFERENCES staff ( emp_id );
 
+SELECT * FROM PatientAppointmentView;
+
 /***************************
    Create View
 ****************************/

@@ -98,7 +98,7 @@ class Episode:
             'bills': [bill.to_json() for bill in self.bills],
             'screenings': [screening.to_json() for screening in self.screenings],
             'appointments': [appointment.to_json() for appointment in self.appointments],
-            #'hospitalizations': [hospitalization.to_json() for hospitalization in self.hospitalizations]
+            'hospitalizations': [hospitalization.to_json() for hospitalization in self.hospitalizations]
         }
 
 class Prescription:
@@ -205,7 +205,7 @@ class Hospitalization:
         return {
             'admissionDate': self.admissionDate,
             'dischargeDate': self.dischargeDate,
-            'room': self.room,
+            'room': self.room.to_json(),
             'responsibleNurse': self.responsibleNurse.to_json()
         }
     

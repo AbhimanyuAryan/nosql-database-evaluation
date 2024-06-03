@@ -7,97 +7,13 @@ import re
 import json
 import requests
 from requests.auth import HTTPDigestAuth
+import datetime
 
 import sys
 sys.path.append('./structs/')
 from structs import *
 from tqdm import tqdm
 
-#https://www.mongodb.com/docs/manual/reference/change-events/update/#mongodb-data-update
-#Lets get the fullDocument and the fullDocumentBeforeChange, compare its hospitalizations discharge date
-"""
-This is the sql trigger that we want to migrate to MongoDB
-
-IF :OLD.discharge_date IS NULL AND :NEW.discharge_date IS NOT NULL THEN
-        -- Calculate the room cost for the associated hospitalization
-        SELECT NVL(SUM(room_cost), 0)
-        INTO v_room_cost
-        FROM room
-        WHERE idroom = :NEW.room_idroom;
-
-        -- Calculate the test cost for the associated hospitalization
-        SELECT NVL(SUM(test_cost), 0)
-        INTO v_test_cost
-        FROM lab_screening
-        WHERE episode_idepisode = :NEW.idepisode;
-
-        -- Calculate the other charges for prescriptions for the associated hospitalization
-        SELECT NVL(SUM(m_cost * dosage), 0)
-        INTO v_other_charges
-        FROM prescription p
-        JOIN medicine m ON p.idmedicine = m.idmedicine
-        WHERE p.idepisode = :NEW.idepisode;
-
-        -- Calculate the total cost of the bill for the associated episode
-        v_total_cost := v_room_cost + v_test_cost + v_other_charges;
-
-        -- Insert the bill with the total cost for the associated episode
-        INSERT INTO bill (idepisode, room_cost, test_cost, other_charges, total, payment_status, registered_at)
-        VALUES (:NEW.idepisode, v_room_cost, v_test_cost, v_other_charges, v_total_cost, 'PENDING', SYSDATE);
-        
-    END IF;
-
-    
-In mongo we will do
-var document = changeEvent.update.fullDocument;
-var documentBefore = changeEvent.update.fullDocumentBeforeChange;
-#TODO: Verify this function because I think that we are stacking bills, probably should verify the diference between the previous episode and the new one to not stack the bills
-
-
-# Lets figure out what hospitalization discharge date has been updated
-for (var i=0; i<documentBefore.episodes.length; i++) {
-
-    for (var j=0; j<documentBefore.episodes[i].hospitalizations[j].length; j++) {
-        var hospitalizationBefore = documentBefore.episodes[i].hospitalizations[j]; 
-        var hospitalization = document.episodes[i].hospitalizations[j];
-        #If the dischargeDate of said hospitalization is diferent in the document and the document before we will calculate the bill
-        
-        if (hospitalizationBefore.dischargeDate == null && hospitalization.dischargeDate != null) {
-            # The room cost for the associated hospitalization is in the document
-            var roomCost = hospitalization.room.room_cost;
-
-            # Calculate the test cost for the associated hospitalization
-            #The testing costs are also in the document
-            var testCost = 0;
-            for (var k=0; k<hospitalization.screenings.length; k++) {
-                testCost += hospitalization.screenings[k].screening_cost;
-            }
-
-
-            # Calculate the other charges for prescriptions for the associated hospitalization
-            var otherCharges = 0;
-            for (var k=0; k<hospitalization.prescriptions.length; k++) {
-                otherCharges += hospitalization.prescriptions[k].medicine.m_cost * hospitalization.prescriptions[k].medicine_quantity;
-            }
-
-
-            # Calculate the total cost of the bill for the associated episode
-            var totalCost = roomCost + testCost + otherCharges;
-
-            # Insert the bill with the total cost for the associated episode
-            db.bill.insertOne({
-                idepisode: document.idepisode,
-                room_cost: roomCost,
-                test_cost: testCost,
-                other_charges: otherCharges,
-                total: totalCost,
-                payment_status: "PENDING",
-                registered_at: new Date()
-            });
-        }
-    }
-}
-"""
 
 class mongoDBController():
     def __init__(self):
@@ -105,10 +21,16 @@ class mongoDBController():
         self.OracleConnection = self.connect(option="Oracle")
         self.MongoConnection = self.connect(option="MongoDB")  
         if self.OracleConnection!=None and self.MongoConnection!=None:
-            self.dropDBs()
-            self.ensureDBs()
-            self.migrate()
-            self.createViews()
+            #self.dropDBs()
+            #self.ensureDBs()
+            #self.migrate()
+            #self.createViews()
+            if self.testMongoAPI():
+                #self.createTriggers()
+                
+                pass    
+            self.runQueries()
+
             self.OracleConnection.close()
             self.MongoConnection.close()
             print("Migration Completed")
@@ -117,7 +39,9 @@ class mongoDBController():
 
     def dropDBs(self):
         #Drop the Oracle database
+        
         try:
+            print("Dropping Oracle databases")
             cursor = self.OracleConnection.cursor()
             #Lets get all the table names from the hospital.sql file
             file = open("./data/hospital.sql", "r")
@@ -166,6 +90,7 @@ class mongoDBController():
             print("Oracle database dropped")
 
             #Lets drop the mongo database
+            print("Dropping Mongo databases...")
             self.MongoConnection.drop_database("BDNOSQLTP")
             print("MongoDB database dropped")
 
@@ -554,6 +479,32 @@ class mongoDBController():
             print("Exception: ", e)
             return False
         
+    def testMongoAPI(self):
+        url = "https://eu-west-2.aws.data.mongodb-api.com/app/data-moivwoh/endpoint/data/v1/action/findOne"
+        payload = json.dumps({
+            "collection": "Patient",
+            "database": "BDNOSQLTP",
+            "dataSource": "bdnosql",
+            "projection": {
+                "_id": 1
+            }
+        })
+        headers = {
+        'Content-Type': 'application/json',
+        'Access-Control-Request-Headers': '*',
+        'api-key': 'xkoPtLXJUZgJGRgmP7UQbbeP6prjC38UvfR9KcIPbvSDW33QahuLvsNNzSOjZhBJ',
+        'Accept': 'application/ejson'
+        }
+        response = requests.request("POST", url, headers=headers, data=payload)
+        
+        if response.status_code == 200:
+            print("API working")
+            return True
+        
+        else:
+            print("API not working")
+            return False
+        
     def createTrigger(self, trigger, functionId):
         #https://www.mongodb.com/docs/atlas/app-services/admin/api/v3/#tag/triggers/operation/adminCreateTrigger
         try:
@@ -594,41 +545,82 @@ class mongoDBController():
             print("Exception: ", e)
 
 
+    def runQueries(self):
+        #Lets load the queries from the queries.json file
+        try:
+            print("Running query: Get Patient by ID")
+            if len(list(self.MongoConnection["BDNOSQLTP"]["Patient"].find({"patient_id": 1})))>0:
+                print("Query executed successfully")
+                
+
+            print("Running query: Get Patient by Name")
+            pipeline =[ { "$match": { "patient_id": 1 } }, 
+                       { "$unwind": "$episodes" }]
+            
+            if len(list(self.MongoConnection["BDNOSQLTP"]["Patient"].aggregate(pipeline)))>0:
+                print("Query executed successfully")
+               
+            
+            print("Running query: Get all patients with specific blood type")
+            result = self.MongoConnection["BDNOSQLTP"]["Patient"].find({ "blood_type": 'O-' })
+            if len(list(self.MongoConnection["BDNOSQLTP"]["Patient"].find({ "blood_type": 'O-' })))>0:
+                print("Query executed successfully")
+               
+
+            print("Running query: Find the average age of all Patients")
+            pipeline = [
+                    {"$group": 
+                     {"_id": None, 
+                        "averageAge": 
+                            {"$avg": 
+                             {"$divide": 
+                                [
+                                        {"$subtract": [
+                                            datetime.datetime.now(), 
+                                            "$birthday"
+                                        ]}, 1000 * 60 * 60 * 24 * 365
+                                ]
+                             }
+                            }
+                     }
+                    }
+            ]
+            if len(list(self.MongoConnection["BDNOSQLTP"]["Patient"].aggregate(pipeline)))>0:
+                print("Query executed successfully")
+
+            print("Running query: Find all the patients that have an appointment in a specific date")
+            payload = [
+                { "$unwind": "$episodes" },
+                { "$unwind": "$episodes.appointments" },
+                { "$match": { "episodes.appointments.appointment_date": datetime.datetime(2018, 11, 29, 0, 0) } }
+            ]
+            if len(list(self.MongoConnection["BDNOSQLTP"]["Patient"].aggregate(payload)))>0:
+                print("Query executed successfully")
+            
+            pipeline = [
+                { "$unwind": "$medical_history" },
+                { "$group": { "_id": "$medical_history.condition", "frequency": { "$sum": 1 } } },
+                { "$sort": { "frequency": -1 } },
+                { "$limit": 1 }
+            ]
+            print("Running query: Find the most common medical condition")
+            if len(list(self.MongoConnection["BDNOSQLTP"]["Patient"].aggregate(pipeline)))>0:
+                print("Query executed successfully")
+            
+            print("All queries ran succesfully...")
+               
+        except Exception as e:
+            print("Error loading the queries")
+            print("Exception: ", e)
+
+
     def createAtlasFunction(self, function):
         #https://www.mongodb.com/docs/atlas/app-services/admin/api/v3/#tag/functions/operation/adminCreateFunction
         try:
             projectId = self.mongoGroupId
             groupId = self.mongoProjectId
-            uri = f"https://services.cloud.mongodb.com/api/atlas/v1.0/groups/{groupId}/apps/{appId}/functions"
-            """
-            headers = {
-                'Content-Type': 'application/json',
-                'Access-Control-Request-Headers': '*',
-                'api-key': self.mongoBearer,
-                'Accept': 'application/json'
-            }
+            dataAPIuri = "https://eu-west-2.aws.data.mongodb-api.com/app/data-moivwoh/endpoint/data/v1"
 
-            payload = {
-                "name": function["name"],
-                "private": True,
-                "source": function["code"],
-                "run_as_system": True
-                }
-            
-            print("Headers: ", headers)
-            #Response:
-            response = requests.post(uri, headers=headers, json=payload)
-            #{
-            #"_id": "string",
-            #"name": "string"
-            #}
-            if response.status_code == 201:
-                print("Function created in MongoDB")
-                return response.json()
-            else:
-                print("Error creating the function in MongoDB")
-                print("Response: ", response.json())
-            """
             auth = HTTPDigestAuth('cpfdagvq', 'b08b1acc-b0c0-4d3c-8004-235e4a18619b')
             payload = json.dumps({
                 "collection": "Patient",
@@ -638,7 +630,93 @@ class mongoDBController():
                     "_id": 1
                 }
             })
+        
 
+            functionCode = """
+                exports = async function(changeEvent) {
+                // A Database Trigger will always call a function with a changeEvent.
+                // Documentation on ChangeEvents: https://docs.mongodb.com/manual/reference/change-events/
+                console.log("Updated date in hospitalization");
+                // This sample function will listen for events and replicate them to a collection in a different Database
+                // Access the _id of the changed document:
+                const docId = 0;
+                console.log(changeEvent.operationType)
+
+                // Get the MongoDB service you want to use (see "Linked Data Sources" tab)
+                // Note: In Atlas Triggers, the service name is defaulted to the cluster name.
+                const serviceName = "bdnosql";
+                const database = "BDNOSQL";
+                const collection = context.services.get(serviceName).db(database).collection(changeEvent.ns.coll);
+
+                // Get the "FullDocument" present in the Insert/Replace/Update ChangeEvents
+                try {
+
+                    // If this is an "update" or "replace" event, then replace the document in the other collection
+                    if (changeEvent.operationType === "update" || changeEvent.operationType === "replace") {
+                    
+                    var document = changeEvent.update.fullDocument;
+                    var documentBefore = changeEvent.update.fullDocumentBeforeChange;
+                    console.log("documentBefore");
+                    console.log(documentBefore);
+                    console.log("documentAfter\n");
+                    console.log(document);
+                    var flag = false;
+                    
+
+                    for (var i=0; i<documentBefore.episodes.length; i++) {
+                        
+                        for (var j=0; j<documentBefore.episodes[i].hospitalizations.length; j++) {
+                            var hospitalizationBefore = documentBefore.episodes[i].hospitalizations[j]; 
+                            var hospitalization = document.episodes[i].hospitalizations[j];
+                            if (hospitalizationBefore.dischargeDate["$date"] == null && hospitalization.dischargeDate["$date"] != null) {
+                                flag = true;
+
+                                var roomCost = hospitalization.room["room_cost"];
+                                console.log("Room Cost: "+roomCost);
+                                
+                                var testCost = 0;
+                                for (var k=0; k<documentBefore.episodes[i].screenings.length; k++) {
+                                    testCost += documentBefore.episodes[i].screenings[k].screening_cost;
+                                }
+                                console.log("Testing cost: "+testCost);
+                    
+                                var otherCharges = 0;
+                                for (var k=0; k<documentBefore.episodes[i].prescriptions.length; k++) {
+                                    otherCharges += documentBefore.episodes[i].prescriptions[k].medicine.medicine_cost * documentBefore.episodes[i].prescriptions[k].dosage;
+                                }
+                                console.log("Prescription Charges: "+otherCharges);
+                    
+                
+                                var totalCost = roomCost + testCost + otherCharges;
+                                
+                                console.log("totalCost");
+                                console.log(totalCost);
+                
+                                await collection.insertOne({
+                                    idepisode: document.idepisode,
+                                    room_cost: roomCost,
+                                    test_cost: testCost,
+                                    other_charges: otherCharges,
+                                    total: totalCost,
+                                    payment_status: "PENDING",
+                                    registered_at: new Date()
+                                });
+                                
+                                console.log("Cost of the room updated to: "+totalCost);
+                            }
+                        
+                    }
+                    if (!flag)
+                        await collection.replaceOne({"_id": docId}, changeEvent.fullDocument);
+                    }
+                    
+                    console.log("Succesfully updated the document");
+                    }
+                } catch(err) {
+                    console.log("error performing mongodb write: ", err.message);
+                }
+                };
+            """
             headers = {"Accept"       : "application/vnd.atlas.2023-01-01+json",
                     "Content-Type" : "application/json"}
 
@@ -690,8 +768,9 @@ class mongoDBController():
                 
                 print("Successfull connection to MongoDB Database")
                 return client
-            except:
+            except Exception as e:
                 print('Error connecting to the database')
+                print("Error: ", e)
                 return None
 
     def run_requirements(self):
