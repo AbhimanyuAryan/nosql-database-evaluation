@@ -21,6 +21,7 @@ class mongoDBController():
         self.OracleConnection = self.connect(option="Oracle")
         self.MongoConnection = self.connect(option="MongoDB")  
         if self.OracleConnection!=None and self.MongoConnection!=None:
+            cursor = self.OracleConnection.cursor()
             self.dropDBs()
             self.ensureDBs()
             self.migrate()
@@ -147,8 +148,7 @@ class mongoDBController():
                     medical_histories_list = []
                     for medical_history in medical_histories:
                         try:
-                            medical_histories_list.append(MedicalHistory(medical_history[0], medical_history[1], medical_history[2], medical_history[3]))
-                            
+                            medical_histories_list.append(MedicalHistory(medical_history[0], medical_history[3], medical_history[1], medical_history[2]))
 
                         except Exception as e:
                             pass
