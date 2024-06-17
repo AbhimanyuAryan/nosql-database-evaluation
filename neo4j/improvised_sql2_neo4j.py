@@ -26,7 +26,9 @@ def parse_date(date_value, format):
         return None
     if isinstance(date_value, datetime):
         return date_value.isoformat()
-    return datetime.strptime(date_value, format).isoformat()
+    if isinstance(date_value, str):
+        return datetime.strptime(date_value, format).isoformat()
+    return date_value  # If the value is not a string or datetime, return it as is
 
 def import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, create_node_query, date_fields=None, date_format='%d-%m-%y'):
     graph = Graph(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -34,15 +36,19 @@ def import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, create_nod
         parameters = {f"col{i}": value for i, value in enumerate(row)}
         if date_fields:
             for field in date_fields:
-                parameters[field] = parse_date(parameters[field], date_format)
-        graph.run(create_node_query, parameters=parameters)
-        print(f"Imported data: {row}")
+                if field in parameters:
+                    parameters[field] = parse_date(parameters[field], date_format)
+        try:
+            graph.run(create_node_query, parameters=parameters)
+            print(f"Imported data: {row}")
+        except Exception as e:
+            print(f"Failed to import data: {row} with error: {e}")
 
 # Oracle and Neo4j connection details
 oracle_host = "localhost"
 oracle_port = 1521
 oracle_service_name = "ORCLCDB"
-oracle_user = "c##abhi"
+oracle_user = "c##testuser"
 oracle_password = "12345"
 neo4j_uri = "bolt://localhost:7687"
 neo4j_user = "neo4j"
@@ -68,7 +74,7 @@ tables_and_queries = {
                 EMP_FNAME: $col1,
                 EMP_LNAME: $col2,
                 DATE_JOINING: $col3,
-                DATE_SEPERATION: $col4,
+                DATE_SEPARATION: $col4,
                 EMAIL: $col5,
                 ADDRESS: $col6,
                 SSN: toInteger($col7),
@@ -217,11 +223,11 @@ tables_and_queries = {
                 POLICY_NUMBER: $col0,
                 PROVIDER: $col1,
                 INSURANCE_PLAN: $col2,
-                CO_PAY: toInteger($col3),
-                COVERAGE: $col4,
-                MATERNITY: $col5,
-                DENTAL: $col6,
-                OPTICAL: $col7
+                DEDUCTIBLE: toFloat($col3),
+                COVERAGE_DETAILS: $col4,
+                HOSPITAL_COVERAGE: $col5,
+                DENTAL_COVERAGE: $col6,
+                VISION_COVERAGE: $col7
             })
         """,
         "constraints": "CREATE CONSTRAINT FOR (i:Insurance) REQUIRE i.POLICY_NUMBER IS UNIQUE;"
@@ -230,13 +236,14 @@ tables_and_queries = {
         "query": """
             CREATE (:Medical_History {
                 RECORD_ID: toInteger($col0),
-                CONDITION: $col1,
-                RECORD_DATE: datetime($col2),
-                IDPATIENT: toInteger($col3)
+                IDPATIENT: toInteger($col1),
+                DIAGNOSIS: $col2,
+                RECORD_DATE: datetime($col3),
+                TREATMENT: $col4
             })
         """,
         "constraints": "CREATE CONSTRAINT FOR (mh:Medical_History) REQUIRE mh.RECORD_ID IS UNIQUE;",
-        "date_fields": ["col2"],
+        "date_fields": ["col3"],
         "date_format": "%d-%m-%y"
     }
 }
