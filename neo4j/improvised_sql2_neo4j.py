@@ -6,16 +6,25 @@ def fetch_all_values_from_table(table_name, host, port, service_name, user, pass
     connection = None
     cursor = None
     try:
+        # Create the Oracle connection string
         dsn = cx_Oracle.makedsn(host, port, service_name=service_name)
+        
+        # Establish the connection
         connection = cx_Oracle.connect(user=user, password=password, dsn=dsn)
         cursor = connection.cursor()
+        
+        # Execute the query to get all values from the table
         cursor.execute(f"SELECT * FROM {table_name}")
+        
+        # Fetch and return all rows
         rows = cursor.fetchall()
         return rows
+
     except cx_Oracle.DatabaseError as e:
         print(f"An error occurred: {e}")
         return None
     finally:
+        # Clean up and close the connection
         if cursor:
             cursor.close()
         if connection:
@@ -26,30 +35,32 @@ def parse_date(date_value, format):
         return None
     if isinstance(date_value, datetime):
         return date_value.isoformat()
-    if isinstance(date_value, str):
-        return datetime.strptime(date_value, format).isoformat()
-    return date_value  # If the value is not a string or datetime, return it as is
+    return datetime.strptime(date_value, format).isoformat()
 
 def import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, create_node_query, date_fields=None, date_format='%d-%m-%y'):
+    # Connect to Neo4j
     graph = Graph(neo4j_uri, auth=(neo4j_user, neo4j_password))
+
     for row in data:
         parameters = {f"col{i}": value for i, value in enumerate(row)}
+        
+        # Handle date parsing
         if date_fields:
             for field in date_fields:
-                if field in parameters:
-                    parameters[field] = parse_date(parameters[field], date_format)
-        try:
-            graph.run(create_node_query, parameters=parameters)
-            print(f"Imported data: {row}")
-        except Exception as e:
-            print(f"Failed to import data: {row} with error: {e}")
+                parameters[field] = parse_date(parameters[field], date_format)
+        
+        # Execute the Cypher query to create a node
+        graph.run(create_node_query, parameters=parameters)
+        print(f"Imported data: {row}")
 
-# Oracle and Neo4j connection details
+# Oracle DB details
 oracle_host = "localhost"
 oracle_port = 1521
 oracle_service_name = "ORCLCDB"
 oracle_user = "c##testuser"
 oracle_password = "12345"
+
+# Neo4j DB details
 neo4j_uri = "bolt://localhost:7687"
 neo4j_user = "neo4j"
 neo4j_password = "12345678"
@@ -74,16 +85,40 @@ tables_and_queries = {
                 EMP_FNAME: $col1,
                 EMP_LNAME: $col2,
                 DATE_JOINING: $col3,
-                DATE_SEPARATION: $col4,
+                DATE_SEPERATION: $col4,
                 EMAIL: $col5,
                 ADDRESS: $col6,
                 SSN: toInteger($col7),
                 IS_ACTIVE_STATUS: $col8,
-                IDDEPARTMENT: $col9,
-                ROLE: $col10
+                IDDEPARTMENT: $col9
             })
         """,
         "constraints": "CREATE CONSTRAINT FOR (s:Staff) REQUIRE s.EMP_ID IS UNIQUE;"
+    },
+    "DOCTOR": {
+        "query": """
+            CREATE (:Doctor {
+                EMP_ID: toInteger($col0),
+                QUALIFICATIONS: $col1
+            })
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (d:Doctor) REQUIRE d.EMP_ID IS UNIQUE;"
+    },
+    "TECHNICIAN": {
+        "query": """
+            CREATE (:Technician {
+                STAFF_EMP_ID: toInteger($col0)
+            })
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (t:Technician) REQUIRE t.STAFF_EMP_ID IS UNIQUE;"
+    },
+    "NURSE": {
+        "query": """
+            CREATE (:Nurse {
+                STAFF_EMP_ID: toInteger($col0)
+            })
+        """,
+        "constraints": "CREATE CONSTRAINT FOR (n:Nurse) REQUIRE n.STAFF_EMP_ID IS UNIQUE;"
     },
     "HOSPITALIZATION": {
         "query": """
@@ -223,11 +258,11 @@ tables_and_queries = {
                 POLICY_NUMBER: $col0,
                 PROVIDER: $col1,
                 INSURANCE_PLAN: $col2,
-                DEDUCTIBLE: toFloat($col3),
-                COVERAGE_DETAILS: $col4,
-                HOSPITAL_COVERAGE: $col5,
-                DENTAL_COVERAGE: $col6,
-                VISION_COVERAGE: $col7
+                CO_PAY: toInteger($col3),
+                COVERAGE: $col4,
+                MATERNITY: $col5,
+                DENTAL: $col6,
+                OPTICAL: $col7
             })
         """,
         "constraints": "CREATE CONSTRAINT FOR (i:Insurance) REQUIRE i.POLICY_NUMBER IS UNIQUE;"
@@ -236,14 +271,13 @@ tables_and_queries = {
         "query": """
             CREATE (:Medical_History {
                 RECORD_ID: toInteger($col0),
-                IDPATIENT: toInteger($col1),
-                DIAGNOSIS: $col2,
-                RECORD_DATE: datetime($col3),
-                TREATMENT: $col4
+                CONDITION: $col1,
+                RECORD_DATE: datetime($col2),
+                IDPATIENT: toInteger($col3)
             })
         """,
         "constraints": "CREATE CONSTRAINT FOR (mh:Medical_History) REQUIRE mh.RECORD_ID IS UNIQUE;",
-        "date_fields": ["col3"],
+        "date_fields": ["col2"],
         "date_format": "%d-%m-%y"
     }
 }
@@ -260,83 +294,109 @@ for table_name, info in tables_and_queries.items():
 for table_name, info in tables_and_queries.items():
     data = fetch_all_values_from_table(table_name, oracle_host, oracle_port, oracle_service_name, oracle_user, oracle_password)
     if data:
-        import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, info["query"], date_fields=info.get("date_fields"), date_format=info.get("date_format"))
+        date_fields = info.get('date_fields')
+        date_format = info.get('date_format', '%d-%m-%y')
+        import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, info['query'], date_fields, date_format)
+    else:
+        print(f"No data to import for table: {table_name}")
 
-# Define relationships
+# Create relationships between nodes
 relationships = [
-    {
-        "query": """
-            MATCH (s:Staff), (d:Department)
-            WHERE s.IDDEPARTMENT = d.IDDEPARTMENT
-            CREATE (s)-[:WORKS_IN]->(d)
-        """
-    },
-    {
-        "query": """
-            MATCH (h:Hospitalization), (r:Room)
-            WHERE h.ROOM_IDROOM = r.IDROOM
-            CREATE (h)-[:OCCUPIES]->(r)
-        """
-    },
-    {
-        "query": """
-            MATCH (e:Episode), (p:Patient)
-            WHERE e.PATIENT_IDPATIENT = p.IDPATIENT
-            CREATE (e)-[:ASSOCIATED_WITH]->(p)
-        """
-    },
-    {
-        "query": """
-            MATCH (b:Bill), (e:Episode)
-            WHERE b.IDEPISODE = e.IDEPISODE
-            CREATE (b)-[:BILLED_FOR]->(e)
-        """
-    },
-    {
-        "query": """
-            MATCH (p:Prescription), (e:Episode)
-            WHERE p.IDEPISODE = e.IDEPISODE
-            CREATE (p)-[:PRESCRIBED_FOR]->(e)
-        """
-    },
-    {
-        "query": """
-            MATCH (a:Appointment), (e:Episode)
-            WHERE a.IDEPISODE = e.IDEPISODE
-            CREATE (a)-[:SCHEDULED_FOR]->(e)
-        """
-    },
-    {
-        "query": """
-            MATCH (ls:Lab_Screening), (e:Episode)
-            WHERE ls.EPISODE_IDEPISODE = e.IDEPISODE
-            CREATE (ls)-[:SCREENED_FOR]->(e)
-        """
-    },
-    {
-        "query": """
-            MATCH (p:Patient), (ec:Emergency_Contact)
-            WHERE p.IDPATIENT = ec.IDPATIENT
-            CREATE (ec)-[:EMERGENCY_CONTACT_FOR]->(p)
-        """
-    },
-    {
-        "query": """
-            MATCH (p:Patient), (i:Insurance)
-            WHERE p.POLICY_NUMBER = i.POLICY_NUMBER
-            CREATE (p)-[:INSURED_BY]->(i)
-        """
-    },
-    {
-        "query": """
-            MATCH (mh:Medical_History), (p:Patient)
-            WHERE mh.IDPATIENT = p.IDPATIENT
-            CREATE (mh)-[:MEDICAL_HISTORY_OF]->(p)
-        """
-    }
+    """
+    MATCH (staff:Staff), (dept:Department)
+    WHERE staff.IDDEPARTMENT = dept.IDDEPARTMENT
+    MERGE (staff)-[:WORKS_IN]->(dept)
+    """,
+    """
+    MATCH (doc:Doctor), (staff:Staff)
+    WHERE doc.EMP_ID = staff.EMP_ID
+    MERGE (doc)-[:IS_DOCTOR_FOR]->(staff)
+    """,
+    """
+    MATCH (tech:Technician), (staff:Staff)
+    WHERE tech.STAFF_EMP_ID = staff.EMP_ID
+    MERGE (tech)-[:IS_TECHNICIAN_FOR]->(staff)
+    """,
+    """
+    MATCH (nur:Nurse), (staff:Staff)
+    WHERE nur.STAFF_EMP_ID = staff.EMP_ID
+    MERGE (nur)-[:IS_NURSE_FOR]->(staff)
+    """,
+    """
+    MATCH (h:Hospitalization), (n:Nurse)
+    WHERE h.RESPONSIBLE_NURSE = n.STAFF_EMP_ID
+    MERGE (h)-[:RESPONSIBLE_FOR]->(n)
+    """,
+    """
+    MATCH (h:Hospitalization), (r:Room)
+    WHERE h.ROOM_IDROOM = r.IDROOM
+    MERGE (h)-[:ASSIGNED_TO]->(r)
+    """,
+    """
+    MATCH (h:Hospitalization), (e:Episode)
+    WHERE h.IDEPISODE = e.IDEPISODE
+    MERGE (h)-[:INVOLVES]->(e)
+    """,
+    """
+    MATCH (b:Bill), (e:Episode)
+    WHERE b.IDEPISODE = e.IDEPISODE
+    MERGE (b)-[:BILLED_FOR]->(e)
+    """,
+    """
+    MATCH (p:Prescription), (e:Episode)
+    WHERE p.IDEPISODE = e.IDEPISODE
+    MERGE (p)-[:PRESCRIBED_FOR]->(e)
+    """,
+    """
+    MATCH (p:Prescription), (m:Medicine)
+    WHERE p.IDMEDICINE = m.IDMEDICINE
+    MERGE (p)-[:PRESCRIBED_MEDICINE]->(m)
+    """,
+    """
+    MATCH (a:Appointment), (d:Doctor)
+    WHERE a.IDDOCTOR = d.EMP_ID
+    MERGE (a)-[:HAS_DOCTOR]->(d)
+    """,
+    """
+    MATCH (a:Appointment), (e:Episode)
+    WHERE a.IDEPISODE = e.IDEPISODE
+    MERGE (a)-[:BELONGS_TO_EPISODE]->(e)
+    """,
+    """
+    MATCH (ls:Lab_Screening), (ep:Episode)
+    WHERE ls.EPISODE_IDEPISODE = ep.IDEPISODE
+    MERGE (ls)-[:BELONGS_TO]->(ep)
+    """,
+    """
+    MATCH (ls:Lab_Screening), (tech:Technician)
+    WHERE ls.IDTECHNICIAN = tech.STAFF_EMP_ID
+    MERGE (ls)-[:PERFORMED_BY]->(tech)
+    """,
+    """
+    MATCH (p:Patient), (e:Episode)
+    WHERE p.IDPATIENT = e.PATIENT_IDPATIENT
+    MERGE (p)-[:HAS_EPISODE]->(e)
+    """,
+    """
+    MATCH (p:Patient), (ec:Emergency_Contact)
+    WHERE p.IDPATIENT = ec.IDPATIENT
+    MERGE (ec)-[:CONTACT_FOR]->(p)
+    """,
+    """
+    MATCH (p:Patient), (i:Insurance)
+    WHERE p.POLICY_NUMBER = i.POLICY_NUMBER
+    MERGE (p)-[:HAS_INSURANCE]->(i)
+    """,
+    """
+    MATCH (p:Patient), (mh:Medical_History)
+    WHERE p.IDPATIENT = mh.IDPATIENT
+    MERGE (p)-[:HAS_MEDICAL_HISTORY]->(mh)
+    """
 ]
 
-# Create relationships
-for relationship in relationships:
-    graph.run(relationship["query"])
-    print(f"Created relationship: {relationship['query']}")
+# Execute relationship queries in Neo4j
+for query in relationships:
+    graph.run(query)
+    print(f"Executed relationship query: {query}")
+
+print("Data import and relationship creation completed.")
