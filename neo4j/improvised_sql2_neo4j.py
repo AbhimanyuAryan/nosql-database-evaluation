@@ -90,35 +90,12 @@ tables_and_queries = {
                 ADDRESS: $col6,
                 SSN: toInteger($col7),
                 IS_ACTIVE_STATUS: $col8,
-                IDDEPARTMENT: $col9
+                IDDEPARTMENT: $col9,
+                ROLE: $col10,
+                QUALIFICATIONS: $col11
             })
         """,
         "constraints": "CREATE CONSTRAINT FOR (s:Staff) REQUIRE s.EMP_ID IS UNIQUE;"
-    },
-    "DOCTOR": {
-        "query": """
-            CREATE (:Doctor {
-                EMP_ID: toInteger($col0),
-                QUALIFICATIONS: $col1
-            })
-        """,
-        "constraints": "CREATE CONSTRAINT FOR (d:Doctor) REQUIRE d.EMP_ID IS UNIQUE;"
-    },
-    "TECHNICIAN": {
-        "query": """
-            CREATE (:Technician {
-                STAFF_EMP_ID: toInteger($col0)
-            })
-        """,
-        "constraints": "CREATE CONSTRAINT FOR (t:Technician) REQUIRE t.STAFF_EMP_ID IS UNIQUE;"
-    },
-    "NURSE": {
-        "query": """
-            CREATE (:Nurse {
-                STAFF_EMP_ID: toInteger($col0)
-            })
-        """,
-        "constraints": "CREATE CONSTRAINT FOR (n:Nurse) REQUIRE n.STAFF_EMP_ID IS UNIQUE;"
     },
     "HOSPITALIZATION": {
         "query": """
@@ -282,6 +259,25 @@ tables_and_queries = {
     }
 }
 
+# Function to merge staff roles data
+def merge_staff_data(staff_data, role_data, role, qualification_field=None):
+    emp_id_index = 0  # Assuming EMP_ID is the first column in staff_data
+    role_index = len(staff_data[0])  # New role column index
+    qualification_index = role_index + 1  # New qualification column index
+
+    merged_data = []
+    for staff_row in staff_data:
+        emp_id = staff_row[emp_id_index]
+        matching_role_row = next((row for row in role_data if row[0] == emp_id), None)
+        if matching_role_row:
+            qualification = matching_role_row[1] if qualification_field else None
+            merged_row = list(staff_row) + [role, qualification]
+        else:
+            merged_row = list(staff_row) + [None, None]
+        merged_data.append(merged_row)
+    
+    return merged_data
+
 # Connect to Neo4j and create constraints
 graph = Graph(neo4j_uri, auth=(neo4j_user, neo4j_password))
 for table_name, info in tables_and_queries.items():
@@ -290,8 +286,25 @@ for table_name, info in tables_and_queries.items():
         graph.run(constraint_query)
         print(f"Created constraint for {table_name}")
 
-# Fetch data from Oracle and import to Neo4j
+# Fetch data from Oracle
+staff_data = fetch_all_values_from_table("STAFF", oracle_host, oracle_port, oracle_service_name, oracle_user, oracle_password)
+doctor_data = fetch_all_values_from_table("DOCTOR", oracle_host, oracle_port, oracle_service_name, oracle_user, oracle_password)
+technician_data = fetch_all_values_from_table("TECHNICIAN", oracle_host, oracle_port, oracle_service_name, oracle_user, oracle_password)
+nurse_data = fetch_all_values_from_table("NURSE", oracle_host, oracle_port, oracle_service_name, oracle_user, oracle_password)
+
+# Merge role data into staff data
+staff_data = merge_staff_data(staff_data, doctor_data, 'Doctor', qualification_field=True)
+staff_data = merge_staff_data(staff_data, technician_data, 'Technician')
+staff_data = merge_staff_data(staff_data, nurse_data, 'Nurse')
+
+# Import merged staff data to Neo4j
+import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, staff_data, tables_and_queries["STAFF"]["query"])
+
+# Fetch and import other tables data, skipping STAFF, TECHNICIAN, DOCTOR, and NURSE
 for table_name, info in tables_and_queries.items():
+    if table_name in ["STAFF", "TECHNICIAN", "DOCTOR", "NURSE"]:
+        continue  # Skip the tables that have been merged and processed
+    
     data = fetch_all_values_from_table(table_name, oracle_host, oracle_port, oracle_service_name, oracle_user, oracle_password)
     if data:
         date_fields = info.get('date_fields')
@@ -299,104 +312,3 @@ for table_name, info in tables_and_queries.items():
         import_data_to_neo4j(neo4j_uri, neo4j_user, neo4j_password, data, info['query'], date_fields, date_format)
     else:
         print(f"No data to import for table: {table_name}")
-
-# Create relationships between nodes
-relationships = [
-    """
-    MATCH (staff:Staff), (dept:Department)
-    WHERE staff.IDDEPARTMENT = dept.IDDEPARTMENT
-    MERGE (staff)-[:WORKS_IN]->(dept)
-    """,
-    """
-    MATCH (doc:Doctor), (staff:Staff)
-    WHERE doc.EMP_ID = staff.EMP_ID
-    MERGE (doc)-[:IS_DOCTOR_FOR]->(staff)
-    """,
-    """
-    MATCH (tech:Technician), (staff:Staff)
-    WHERE tech.STAFF_EMP_ID = staff.EMP_ID
-    MERGE (tech)-[:IS_TECHNICIAN_FOR]->(staff)
-    """,
-    """
-    MATCH (nur:Nurse), (staff:Staff)
-    WHERE nur.STAFF_EMP_ID = staff.EMP_ID
-    MERGE (nur)-[:IS_NURSE_FOR]->(staff)
-    """,
-    """
-    MATCH (h:Hospitalization), (n:Nurse)
-    WHERE h.RESPONSIBLE_NURSE = n.STAFF_EMP_ID
-    MERGE (h)-[:RESPONSIBLE_FOR]->(n)
-    """,
-    """
-    MATCH (h:Hospitalization), (r:Room)
-    WHERE h.ROOM_IDROOM = r.IDROOM
-    MERGE (h)-[:ASSIGNED_TO]->(r)
-    """,
-    """
-    MATCH (h:Hospitalization), (e:Episode)
-    WHERE h.IDEPISODE = e.IDEPISODE
-    MERGE (h)-[:INVOLVES]->(e)
-    """,
-    """
-    MATCH (b:Bill), (e:Episode)
-    WHERE b.IDEPISODE = e.IDEPISODE
-    MERGE (b)-[:BILLED_FOR]->(e)
-    """,
-    """
-    MATCH (p:Prescription), (e:Episode)
-    WHERE p.IDEPISODE = e.IDEPISODE
-    MERGE (p)-[:PRESCRIBED_FOR]->(e)
-    """,
-    """
-    MATCH (p:Prescription), (m:Medicine)
-    WHERE p.IDMEDICINE = m.IDMEDICINE
-    MERGE (p)-[:PRESCRIBED_MEDICINE]->(m)
-    """,
-    """
-    MATCH (a:Appointment), (d:Doctor)
-    WHERE a.IDDOCTOR = d.EMP_ID
-    MERGE (a)-[:HAS_DOCTOR]->(d)
-    """,
-    """
-    MATCH (a:Appointment), (e:Episode)
-    WHERE a.IDEPISODE = e.IDEPISODE
-    MERGE (a)-[:BELONGS_TO_EPISODE]->(e)
-    """,
-    """
-    MATCH (ls:Lab_Screening), (ep:Episode)
-    WHERE ls.EPISODE_IDEPISODE = ep.IDEPISODE
-    MERGE (ls)-[:BELONGS_TO]->(ep)
-    """,
-    """
-    MATCH (ls:Lab_Screening), (tech:Technician)
-    WHERE ls.IDTECHNICIAN = tech.STAFF_EMP_ID
-    MERGE (ls)-[:PERFORMED_BY]->(tech)
-    """,
-    """
-    MATCH (p:Patient), (e:Episode)
-    WHERE p.IDPATIENT = e.PATIENT_IDPATIENT
-    MERGE (p)-[:HAS_EPISODE]->(e)
-    """,
-    """
-    MATCH (p:Patient), (ec:Emergency_Contact)
-    WHERE p.IDPATIENT = ec.IDPATIENT
-    MERGE (ec)-[:CONTACT_FOR]->(p)
-    """,
-    """
-    MATCH (p:Patient), (i:Insurance)
-    WHERE p.POLICY_NUMBER = i.POLICY_NUMBER
-    MERGE (p)-[:HAS_INSURANCE]->(i)
-    """,
-    """
-    MATCH (p:Patient), (mh:Medical_History)
-    WHERE p.IDPATIENT = mh.IDPATIENT
-    MERGE (p)-[:HAS_MEDICAL_HISTORY]->(mh)
-    """
-]
-
-# Execute relationship queries in Neo4j
-for query in relationships:
-    graph.run(query)
-    print(f"Executed relationship query: {query}")
-
-print("Data import and relationship creation completed.")
