@@ -1,21 +1,9 @@
-# nosql-projeto
+# Comparing Oracle/MongoDB/Noe4j database
 
-It is intended that each group of students carry out a work of analysis, planning, implementation of
-a relational and two non-relational DBMS. To do so, they must use the Hospital Management
-System relational database, whose customized script will be made available on the elearning
-platform, with the designation hospital.sql.
-The supplied Oracle database represents a fictitious hospital and includes various database objects,
-such as tables, views, sequences, indexes, triggers, and procedures.
+The aim of this practical is to carry out a work of analysis, planning, implementation of a relation and two non-relational DBMS, MongoDB and Neo4j. Migrated Oracle database to MongoDB and Graph Database
 
-To do the work, the students must use one relational model and two non-relational databases:
-one must be document-oriented (MongoDB) and the other graph-oriented (Neo4j).
-After familiarizing each of the database models, it is intended that each group performs the following
-tasks:
+### Comparing queries between MongoDB and Neo4j
 
-1. According to the provided relational schema, define and explain the processes required to
-   migrate the provided data to the new non-relational systems in order to maximize each of
-   the paradigms.
-2. Define and implement a set of queries that allow you to demonstrate the operability of the
-   implemented systems.
-3. Make a critical analysis of the work done, comparing, whenever possible, the models and
-   functionalities now implemented with those made available in the relational system provided.
+### Comparing triggers between Mongodb and Neo4j
+
+### Comparing views between Mongodb and Neo4j
